@@ -60,7 +60,7 @@ async function llm(messages, json = false, validate = () => true) {
     const attempt = { provider: t.name, status: 'running' };
     execution.attempts.push(attempt);
     try {
-      const body = { model: t.model, messages, temperature: 0.4 };
+      const body = { model: t.model, messages, temperature: json ? 0 : 0.4 };
       if (json) body.response_format = { type: 'json_object' };
       const r = await fetch(t.url, { method: 'POST', headers: { Authorization: `Bearer ${t.key}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(25000) });
       if (!r.ok) throw Object.assign(new Error('Provider HTTP error'), { publicCode: `HTTP ${r.status}` });
@@ -242,7 +242,7 @@ function checkout(quoteId, idemKey, by) {
 // ---- 모아 시나리오 (면접 옷) ----
 async function moaStart(text) {
   log('request', `사용자: ${text}`);
-  const sys = `${context()}\n너는 쇼핑 비서의 의도 해석기다. JSON으로만 답해라. 키: occasion, date(YYYY-MM-DD 또는 null), wanted_item(사용자가 사려는 물건), dress_code, evidence(배열, {"source":"캘린더|옷장|대화|추정","text":"..."}).`;
+  const sys = `사용자의 구매 요청을 해석하고 아래 JSON 구조로만 답하라. evidence는 문자열 배열이 아니라 객체 배열이다. 사용자가 말하지 않은 정확한 날짜와 색상은 추정하지 않는다. '다음 주'의 date는 반드시 null이다. dress_code는 일반적인 제안이다.\n출력 구조: {"occasion":"면접","date":null,"wanted_item":"재킷","dress_code":"단정한 면접 복장","evidence":[{"source":"대화","text":"사용자가 면접용 재킷 구매를 문의함"}]}`;
   const parsed = await llm([{ role: 'system', content: sys }, { role: 'user', content: text }], true, v => typeof v.occasion === 'string' && typeof v.wanted_item === 'string' && validEvidence(v));
   const intent = parsed?.content || { occasion: '면접', wanted_item: '재킷', evidence: [{ source: '대화', text }] };
   const jacket = { name: '싱글 재킷 차콜', price: 89000, seller: '샘플몰 A', source: '샘플 가격' };
