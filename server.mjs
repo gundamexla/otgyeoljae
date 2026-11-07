@@ -31,6 +31,10 @@ const state = {
   log: [],
   ruleHistory: [],
   idem: new Set(),
+  // 모아 시나리오: 가상 지갑과 지난 구매 피드백, 사용자가 정한 확인 항목
+  wallet: { balance: 130000, reserve: 70000 },
+  feedback: [{ at: '2026-09-21', item: '리넨 셔츠 (9월 구매)', note: '드라이클리닝 맡기기 번거로워서 잘 안 입게 돼', rule: '관리 방법(물세탁 가능 여부) 먼저 확인' }],
+  checks: ['관리 방법(물세탁 가능 여부) 먼저 확인'],
 };
 const won = (n) => n.toLocaleString('ko-KR') + '원';
 const log = (type, text) => state.log.unshift({ at: new Date().toISOString(), type, text });
@@ -167,8 +171,48 @@ function checkout(quoteId, idemKey, by) {
   const receipt = { id: 'R-' + crypto.randomUUID().slice(0, 6).toUpperCase(), quoteId, outfit: q.outfit, lines: q.lines.map((l) => ({ name: l.name, price: l.price, category: l.category, seller: l.seller })), total: q.total, by, at: new Date().toISOString(), simulated: true, regret: null };
   state.receipts.unshift(receipt);
   state.budget.spent += q.total;
+  state.wallet.balance -= q.total;
   log('pay', `${by}: ${q.outfit} ${won(q.total)} 시뮬레이션 결제 (${receipt.id})`);
   return receipt;
+}
+
+// ---- 모아 시나리오 (면접 옷) ----
+async function moaStart(text) {
+  log('request', `사용자: ${text}`);
+  const sys = `${context()}\n너는 쇼핑 비서의 의도 해석기다. JSON으로만 답해라. 키: occasion, date(YYYY-MM-DD 또는 null), wanted_item(사용자가 사려는 물건), dress_code, evidence(배열, {"source":"캘린더|옷장|대화|추정","text":"..."}).`;
+  const parsed = await llm([{ role: 'system', content: sys }, { role: 'user', content: text }], true);
+  const intent = parsed?.content || { occasion: '면접', wanted_item: '재킷', evidence: [{ source: '대화', text }] };
+  const jacket = { name: '싱글 재킷 차콜', price: 89000, seller: '샘플몰 A', source: '샘플 가격' };
+  const usable = state.wallet.balance - state.wallet.reserve;
+  const owned = closet.find((c) => c.category === '아우터' && c.type === '재킷');
+  log('judge', `재킷 ${won(jacket.price)} > 사용 가능 ${won(usable)}: 생활비 침범 경고`);
+  return { provider: parsed?.provider, intent, wallet: state.wallet, usable, jacket, invades: jacket.price > usable, owned };
+}
+
+function moaQuote(b) {
+  const lines = (b.lines || []).map((l) => ({ name: String(l.name), price: Number(l.price), category: l.category || '하의', seller: l.seller || '샘플몰', refundable: true, source: '샘플 가격' }));
+  const shipping = lines.length ? 3000 : 0;
+  const total = lines.reduce((s, l) => s + l.price, 0) + shipping;
+  const after = state.wallet.balance - total;
+  const id = crypto.randomUUID().slice(0, 8);
+  const q = { id, outfit: b.title || '모아 결재', lines, reuse: b.reuse || [], shipping, total, after, reserve: state.wallet.reserve, extra: after - state.wallet.reserve, keepsReserve: after >= state.wallet.reserve, why: ['사람이 최종 승인하는 구매'], decision: 'approve', evidence: b.evidence || [], status: 'pending', createdAt: new Date().toISOString(), moa: true };
+  state.quotes[id] = q;
+  log('judge', `결재 카드: ${lines.map((l) => l.name).join(', ')} ${won(total)}, 구매 후 잔액 ${won(after)} (생활비 ${q.keepsReserve ? '유지' : '침범'})`);
+  return q;
+}
+
+function moaFeedback(b) {
+  const fb = { at: new Date().toISOString().slice(0, 10), item: String(b.item || ''), note: String(b.note || ''), rule: String(b.rule || '') };
+  state.feedback.unshift(fb);
+  let change = null;
+  if (b.apply && fb.rule && !state.checks.includes(fb.rule)) {
+    state.checks.push(fb.rule);
+    change = { at: new Date().toISOString(), rule: '구매 전 확인 항목', before: '없음', after: fb.rule, reason: `${fb.item}: ${fb.note}` };
+    state.ruleHistory.unshift(change);
+    log('rule', `확인 항목 추가: ${fb.rule}`);
+  }
+  log('regret', `구매 후 피드백: ${fb.item} → ${fb.note}`);
+  return { change, checks: state.checks };
 }
 
 function regret(receiptId, lineName, answer) {
@@ -197,9 +241,12 @@ http.createServer(async (req, res) => {
     const u = new URL(req.url, 'http://x');
     if (req.method === 'POST' && u.pathname === '/api/chat') return send(res, 200, await handleChat(String((await body(req)).text || '').slice(0, 500)));
     if (req.method === 'POST' && u.pathname === '/api/approve') { const b = await body(req); const q = state.quotes[b.quoteId]; if (b.action === 'reject') { if (q) q.status = 'rejected'; log('reject', `결재 반려: ${q?.outfit}`); return send(res, 200, { ok: true, rejected: true }); } return send(res, 200, { receipt: checkout(b.quoteId, b.idemKey || crypto.randomUUID(), '사용자 결재 승인') }); }
+    if (req.method === 'POST' && u.pathname === '/api/moa/start') { const b = await body(req); return send(res, 200, await moaStart(String(b.text || '').slice(0, 500))); }
+    if (req.method === 'POST' && u.pathname === '/api/moa/quote') { const b = await body(req); return send(res, 200, moaQuote(b)); }
+    if (req.method === 'POST' && u.pathname === '/api/moa/feedback') { const b = await body(req); return send(res, 200, moaFeedback(b)); }
     if (req.method === 'POST' && u.pathname === '/api/regret') { const b = await body(req); return send(res, 200, regret(b.receiptId, b.line, b.answer)); }
     if (req.method === 'POST' && u.pathname === '/api/rules') { const b = await body(req); if (b.approvalAmount) state.rules.approvalAmount = Number(b.approvalAmount); if (b.categoryMode) Object.assign(state.rules.categoryMode, b.categoryMode); log('rule', '사용자가 문턱 설정 변경'); return send(res, 200, state.rules); }
-    if (u.pathname === '/api/state') return send(res, 200, { rules: state.rules, budget: state.budget, receipts: state.receipts, log: state.log.slice(0, 60), ruleHistory: state.ruleHistory, llm: { skt: !!process.env.OBA_API_KEY, openai: !!process.env.OPENAI_API_KEY, naver: !!process.env.NAVER_CLIENT_ID } });
+    if (u.pathname === '/api/state') return send(res, 200, { wallet: state.wallet, feedback: state.feedback, checks: state.checks, rules: state.rules, budget: state.budget, receipts: state.receipts, log: state.log.slice(0, 60), ruleHistory: state.ruleHistory, llm: { skt: !!process.env.OBA_API_KEY, openai: !!process.env.OPENAI_API_KEY, naver: !!process.env.NAVER_CLIENT_ID } });
     const file = path.join(ROOT, 'public', u.pathname === '/' ? 'index.html' : path.normalize(u.pathname).replace(/^([\\/])+/, ''));
     if (!file.startsWith(path.join(ROOT, 'public')) || !fs.existsSync(file)) { res.writeHead(404); return res.end('not found'); }
     const types = { '.html': 'text/html; charset=utf-8', '.css': 'text/css', '.js': 'text/javascript', '.png': 'image/png', '.svg': 'image/svg+xml' };

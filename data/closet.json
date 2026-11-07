@@ -1,10 +1,56 @@
 [
-  {"name":"옥스퍼드 셔츠","category":"상의","type":"셔츠","color":"화이트"},
-  {"name":"슬랙스","category":"하의","type":"슬랙스","color":"블랙"},
-  {"name":"니트","category":"상의","type":"니트","color":"네이비"},
-  {"name":"페니 로퍼","category":"신발","type":"로퍼","color":"브라운"},
-  {"name":"청바지","category":"하의","type":"데님","color":"인디고"},
-  {"name":"러닝화","category":"신발","type":"운동화","color":"화이트"},
-  {"name":"후드티","category":"상의","type":"후드","color":"그레이"},
-  {"name":"트렌치코트","category":"아우터","type":"코트","color":"베이지"}
+  {
+    "name": "옥스퍼드 셔츠",
+    "category": "상의",
+    "type": "셔츠",
+    "color": "화이트"
+  },
+  {
+    "name": "슬랙스",
+    "category": "하의",
+    "type": "슬랙스",
+    "color": "블랙"
+  },
+  {
+    "name": "니트",
+    "category": "상의",
+    "type": "니트",
+    "color": "네이비"
+  },
+  {
+    "name": "페니 로퍼",
+    "category": "신발",
+    "type": "로퍼",
+    "color": "브라운"
+  },
+  {
+    "name": "청바지",
+    "category": "하의",
+    "type": "데님",
+    "color": "인디고"
+  },
+  {
+    "name": "러닝화",
+    "category": "신발",
+    "type": "운동화",
+    "color": "화이트"
+  },
+  {
+    "name": "후드티",
+    "category": "상의",
+    "type": "후드",
+    "color": "그레이"
+  },
+  {
+    "name": "트렌치코트",
+    "category": "아우터",
+    "type": "코트",
+    "color": "베이지"
+  },
+  {
+    "name": "재킷",
+    "category": "아우터",
+    "type": "재킷",
+    "color": "블랙"
+  }
 ]
