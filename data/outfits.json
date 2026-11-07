@@ -1,0 +1,16 @@
+[
+  {"id":"o1","tag":"wedding","name":"하객룩 A · 네이비 셋업","items":[
+    {"productId":"p1","keyword":"남성 네이비 싱글 블레이저","category":"아우터","type":"블레이저","color":"네이비"},
+    {"productId":"p2","keyword":"남성 화이트 옥스퍼드 셔츠","category":"상의","type":"셔츠","color":"화이트"},
+    {"productId":"p3","keyword":"남성 네이비 슬랙스","category":"하의","type":"슬랙스","color":"네이비"},
+    {"productId":"p4","keyword":"남성 블랙 더비 슈즈","category":"신발","type":"더비","color":"블랙"}
+  ]},
+  {"id":"o2","tag":"wedding","name":"하객룩 B · 베이지 니트","items":[
+    {"productId":"p5","keyword":"남성 베이지 카라 니트","category":"상의","type":"카라니트","color":"베이지"},
+    {"productId":"p6","keyword":"남성 그레이 와이드 슬랙스","category":"하의","type":"슬랙스","color":"그레이"},
+    {"owned":true,"category":"신발","type":"로퍼","color":"브라운"}
+  ]},
+  {"id":"o3","tag":"restock","name":"늘 사던 양말 5켤레","items":[
+    {"productId":"p7","keyword":"남성 무지 크루 양말 5켤레","category":"잡화","type":"양말","color":"블랙"}
+  ]}
+]

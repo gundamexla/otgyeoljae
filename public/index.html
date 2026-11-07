@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>옷결재 · 후회 없이 잘 사는 AI 쇼핑 비서</title>
+<style>
+  :root { --bg:#f6f5f2; --card:#fff; --ink:#1d1d1f; --sub:#6b6b70; --line:#e6e3dc; --brand:#3b4cca; --ok:#1f8a5b; --warn:#c2410c; --stop:#b42318; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:"Pretendard","Apple SD Gothic Neo","Malgun Gothic",system-ui,sans-serif; background:var(--bg); color:var(--ink); }
+  header { display:flex; align-items:center; gap:16px; padding:14px 24px; border-bottom:1px solid var(--line); background:#fff; position:sticky; top:0; z-index:2; }
+  header h1 { font-size:20px; margin:0; }
+  header .tag { color:var(--sub); font-size:14px; }
+  header nav { margin-left:auto; display:flex; gap:6px; }
+  header nav button { border:1px solid var(--line); background:#fff; padding:8px 14px; border-radius:999px; cursor:pointer; font-size:14px; }
+  header nav button.on { background:var(--ink); color:#fff; border-color:var(--ink); }
+  .badge { font-size:12px; padding:3px 8px; border-radius:999px; background:#eef0ff; color:var(--brand); }
+  main { display:grid; grid-template-columns: 420px 1fr; gap:20px; padding:20px 24px; max-width:1400px; margin:0 auto; }
+  .panel { background:var(--card); border:1px solid var(--line); border-radius:16px; }
+  .chat { display:flex; flex-direction:column; height:calc(100vh - 110px); }
+  .bot { display:flex; align-items:center; gap:12px; padding:16px; border-bottom:1px solid var(--line); }
+  .avatar { width:52px; height:52px; border-radius:50%; background:linear-gradient(135deg,#6d7cff,#b5a2ff); display:grid; place-items:center; color:#fff; font-weight:800; font-size:20px; }
+  .bot b { display:block; } .bot small { color:var(--sub); }
+  .msgs { flex:1; overflow:auto; padding:16px; display:flex; flex-direction:column; gap:10px; }
+  .m { max-width:85%; padding:10px 14px; border-radius:14px; line-height:1.5; font-size:15px; white-space:pre-wrap; }
+  .m.me { align-self:flex-end; background:var(--ink); color:#fff; }
+  .m.ai { align-self:flex-start; background:#f1f0ec; }
+  .m.sys { align-self:center; font-size:12px; color:var(--sub); background:none; }
+  .quick { display:flex; flex-wrap:wrap; gap:6px; padding:0 16px 10px; }
+  .quick button { border:1px dashed #b9b6ad; background:#fff; padding:7px 10px; border-radius:10px; cursor:pointer; font-size:13px; }
+  form { display:flex; gap:8px; padding:12px 16px; border-top:1px solid var(--line); }
+  form input { flex:1; padding:12px; border:1px solid var(--line); border-radius:10px; font-size:15px; }
+  form button { padding:0 18px; border:0; border-radius:10px; background:var(--brand); color:#fff; font-weight:700; cursor:pointer; }
+  .cards { display:flex; flex-direction:column; gap:14px; height:calc(100vh - 110px); overflow:auto; padding:2px; }
+  .card { background:#fff; border:1px solid var(--line); border-radius:16px; padding:18px; }
+  .card h3 { margin:0 0 10px; font-size:16px; display:flex; gap:8px; align-items:center; }
+  .pill { font-size:12px; padding:3px 9px; border-radius:999px; font-weight:700; }
+  .pill.approve { background:#fff4e5; color:var(--warn); } .pill.auto { background:#e7f6ee; color:var(--ok); } .pill.skip { background:#fdecea; color:var(--stop); } .pill.paid { background:#eef0ff; color:var(--brand); }
+  table { width:100%; border-collapse:collapse; font-size:14px; } td { padding:7px 4px; border-bottom:1px solid #f0eee8; } td.r { text-align:right; white-space:nowrap; }
+  .muted { color:var(--sub); font-size:13px; }
+  .row { display:flex; gap:10px; flex-wrap:wrap; margin-top:12px; }
+  .btn { padding:10px 16px; border-radius:10px; border:1px solid var(--line); background:#fff; cursor:pointer; font-weight:700; }
+  .btn.primary { background:var(--ink); color:#fff; border-color:var(--ink); }
+  .why li, .ev li { margin:4px 0; font-size:14px; }
+  .src { display:inline-block; font-size:11px; padding:1px 6px; border-radius:6px; background:#f1f0ec; color:var(--sub); margin-right:6px; }
+  .total { font-size:20px; font-weight:800; }
+  .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+  .box { background:#faf9f6; border-radius:12px; padding:12px; }
+  .empty { color:var(--sub); text-align:center; padding:40px; }
+  .tab { display:none; } .tab.on { display:block; }
+  .log li { font-size:13px; margin:6px 0; } .log time { color:var(--sub); margin-right:8px; }
+  .changed { background:#fff4e5; border:1px solid #f5c38b; border-radius:12px; padding:12px; margin-top:10px; }
+  @media (max-width: 900px) { main { grid-template-columns:1fr; } .chat,.cards { height:auto; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>옷결재</h1>
+  <span class="tag">후회 없이 잘 사는 AI 쇼핑 비서 · 판정은 규칙이, 해석은 SKT A.X K2가</span>
+  <span class="badge" id="llmBadge">LLM 확인 중</span>
+  <nav>
+    <button class="on" data-tab="t-main">비서</button>
+    <button data-tab="t-rules">문턱 설정</button>
+    <button data-tab="t-log">기록</button>
+  </nav>
+</header>
+
+<div id="t-main" class="tab on">
+<main>
+  <section class="panel chat">
+    <div class="bot"><div class="avatar">볼</div><div><b>볼티</b><small>러프하게 말해. 맡길 건 맡고, 결재할 건 올릴게.</small></div></div>
+    <div class="msgs" id="msgs"><div class="m ai">안녕! 뭐 필요해? 사도 되는 건 내가 처리하고, 네가 결재해야 할 건 근거랑 같이 올릴게. 안 사는 게 이득이면 말릴 거야.</div></div>
+    <div class="quick">
+      <button data-q="이번 주말 결혼식 가는데 뭐 입지">결혼식 뭐 입지</button>
+      <button data-q="양말 다 떨어졌어">양말 떨어졌어</button>
+      <button id="weekLater">일주일 후 (후회 체크)</button>
+    </div>
+    <form id="f"><input id="q" placeholder="예: 이번 주말 결혼식 가는데 뭐 입지" autocomplete="off" /><button>보내기</button></form>
+  </section>
+  <section class="cards" id="cards"><div class="card empty">왼쪽에서 말을 걸면 여기에 제안, 결재 서류, 영수증이 뜹니다.</div></section>
+</main>
+</div>
+
+<div id="t-rules" class="tab"><main style="grid-template-columns:1fr"><section class="card">
+  <h3>문턱 설정 <span class="muted">무엇을 맡기고 무엇을 내가 결재할지</span></h3>
+  <div class="grid2">
+    <div class="box"><b>금액 기준</b><p class="muted">주문 총액이 이 금액 이상이면 결재로 올립니다.</p><input id="amt" type="number" step="10000" style="padding:8px;width:160px" /> 원 <button class="btn" id="saveAmt">저장</button></div>
+    <div class="box"><b>항상 적용</b><ul class="why"><li>환불 불가 상품은 결재</li><li>옷장에 같은 종류·색이 있으면 "안 사는 게 이득" 제안</li><li>이번 달 남은 예산을 넘으면 결재</li></ul></div>
+  </div>
+  <h3 style="margin-top:18px">카테고리별 처리 <span class="muted">후회 체크 결과로 자동 변경됩니다</span></h3>
+  <div id="cats" class="row"></div>
+  <h3 style="margin-top:18px">이번 달 의류 예산</h3><div id="budget" class="muted"></div>
+</section></main></div>
+
+<div id="t-log" class="tab"><main style="grid-template-columns:1fr 1fr">
+  <section class="card"><h3>문턱 변경 이력</h3><div id="hist" class="muted">아직 없음</div><h3 style="margin-top:18px">영수증 (시뮬레이션)</h3><div id="rcpts" class="muted">아직 없음</div></section>
+  <section class="card"><h3>실행 기록</h3><ul class="log" id="log"></ul></section>
+</main></div>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const won = (n) => Number(n).toLocaleString('ko-KR') + '원';
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
+const post = (u, b) => fetch(u, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(b) }).then((r) => r.json());
+
+document.querySelectorAll('header nav button').forEach((b) => b.onclick = () => {
+  document.querySelectorAll('header nav button').forEach((x) => x.classList.toggle('on', x === b));
+  document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('on', t.id === b.dataset.tab));
+  refresh();
+});
+function say(text, who) { const d = document.createElement('div'); d.className = 'm ' + who; d.textContent = text; $('#msgs').appendChild(d); $('#msgs').scrollTop = 1e9; return d; }
+function clearCards() { $('#cards').innerHTML = ''; }
+function addCard(html) { const d = document.createElement('div'); d.className = 'card'; d.innerHTML = html; $('#cards').prepend(d); return d; }
+
+async function ask(text) {
+  say(text, 'me'); const wait = say('볼티가 생각 중… (의도 해석 → 상품 연결 → 문턱 판정)', 'sys');
+  try {
+    const r = await post('/api/chat', { text });
+    wait.remove(); say(r.reply || r.error, 'ai');
+    if (r.provider) say('의도 해석: ' + r.provider, 'sys');
+    clearCards();
+    if (r.intent?.evidence?.length) addCard(`<h3>요청 해석 <span class="muted">${esc(r.intent.occasion || '')} ${esc(r.intent.date || '')}</span></h3><ul class="ev">${r.intent.evidence.map((e) => `<li><span class="src">${esc(e.source)}</span>${esc(e.text)}</li>`).join('')}</ul>`);
+    for (const c of (r.cards || []).reverse()) render(c);
+  } catch (e) { wait.textContent = '오류: ' + e.message; }
+  refresh();
+}
+function lineRows(lines) { return lines.map((l) => `<tr><td>${esc(l.name)}<div class="muted">${esc(l.seller)} · ${esc(l.source || '')}${l.refundable === false ? ' · <b style="color:#b42318">환불 불가</b>' : ''}</div></td><td class="r">${won(l.price)}</td></tr>`).join(''); }
+function render(c) {
+  const q = c.quote;
+  if (c.kind === 'proposal') addCard(`<h3>착장 제안 <span class="pill ${q.decision}">${q.decision === 'approve' ? '결재 필요' : q.decision === 'auto' ? '자동 처리' : '구매 불필요'}</span></h3><b>${esc(q.outfit)}</b><table>${lineRows(q.lines)}<tr><td class="muted">배송비</td><td class="r">${won(q.shipping)}</td></tr><tr><td><b>총액</b></td><td class="r total">${won(q.total)}</td></tr></table>`);
+  if (c.kind === 'skip') addCard(`<h3>안 사는 게 이득 <span class="pill skip">반려 제안</span></h3><ul class="why">${c.items.map((s) => `<li><b>${esc(s.name)}</b> (${won(s.price)}) · ${esc(s.reason)}</li>`).join('')}</ul><p class="muted">제안에서 빼고 총액을 다시 계산했어요. 아낀 돈: ${won(c.items.reduce((a, s) => a + s.price, 0))}</p>`);
+  if (c.kind === 'approval') {
+    const el = addCard(`<h3>결재 서류 <span class="pill approve">사람 결재</span></h3>
+      <div class="grid2"><div class="box"><div class="muted">무엇을</div><b>${esc(q.outfit)}</b><div class="total">${won(q.total)}</div><div class="muted">이번 달 남은 예산 ${won(q.remaining)} → 결제 후 ${won(q.remaining - q.total)}</div></div>
+      <div class="box"><div class="muted">왜 결재로 올렸나 (규칙)</div><ul class="why">${q.why.map((w) => `<li>${esc(w)}</li>`).join('')}</ul></div></div>
+      <div class="grid2" style="margin-top:12px"><div class="box"><div class="muted">근거</div><ul class="ev">${(q.evidence || []).map((e) => `<li><span class="src">${esc(e.source)}</span>${esc(e.text)}</li>`).join('') || '<li class="muted">대화 내용</li>'}</ul></div>
+      <div class="box"><div class="muted">포기한 대안</div>${q.alternative ? `<b>${esc(q.alternative.name)}</b> · ${won(q.alternative.total)}<div class="muted">${q.alternative.decision === 'auto' ? '문턱 안이라 자동 처리 가능했던 안' : esc(q.alternative.why.join(', '))}</div>` : '없음'}
+      <div class="muted" style="margin-top:8px">잘못되면: 환불 가능 상품은 7일 안 취소, 환불 불가 상품은 결제 전 여기서 빼세요.</div></div></div>
+      <div class="row"><button class="btn primary" data-a="ok">승인하고 결제 (시뮬레이션)</button><button class="btn" data-a="alt">대안으로 바꾸기</button><button class="btn" data-a="no">반려</button></div>`);
+    const idem = crypto.randomUUID();
+    el.querySelector('[data-a=ok]').onclick = async (ev) => { ev.target.disabled = true; const r = await post('/api/approve', { quoteId: q.id, idemKey: idem }); render({ kind:'receipt', receipt:r.receipt }); say(`결재 받았어. ${won(r.receipt.total)} 결제 처리했고 영수증 남겼어. 일주일 뒤에 잘 샀는지 물어볼게.`, 'ai'); refresh(); };
+    el.querySelector('[data-a=no]').onclick = async () => { await post('/api/approve', { quoteId: q.id, action:'reject' }); say('반려 확인. 아무것도 결제 안 했어.', 'ai'); refresh(); };
+    el.querySelector('[data-a=alt]').onclick = () => say(q.alternative ? `${q.alternative.name}(${won(q.alternative.total)})로 가면 문턱 안이라 바로 처리할 수 있어. 데모에선 승인 흐름을 보여줄게.` : '대안이 없어.', 'ai');
+  }
+  if (c.kind === 'receipt') { const r = c.receipt; addCard(`<h3>영수증 <span class="pill paid">${esc(r.by)}</span> <span class="muted">${esc(r.id)} · 시뮬레이션 결제</span></h3><table>${r.lines.map((l) => `<tr><td>${esc(l.name)}</td><td class="r">${won(l.price)}</td></tr>`).join('')}<tr><td><b>합계</b></td><td class="r total">${won(r.total)}</td></tr></table><p class="muted">${new Date(r.at).toLocaleString('ko-KR')} · 실제 결제 아님</p>`); }
+}
+
+$('#f').onsubmit = (e) => { e.preventDefault(); const t = $('#q').value.trim(); if (t) { $('#q').value = ''; ask(t); } };
+document.querySelectorAll('[data-q]').forEach((b) => b.onclick = () => ask(b.dataset.q));
+$('#weekLater').onclick = async () => {
+  const s = await fetch('/api/state').then((r) => r.json());
+  const rc = s.receipts.find((r) => r.by !== '자동 처리') || s.receipts[0];
+  if (!rc) return say('아직 산 게 없어. 먼저 결혼식 옷부터 골라보자.', 'ai');
+  say('(일주일 후)', 'sys'); say(`지난주에 산 ${rc.outfit}, 잘 샀어? 하나씩 알려줘. 후회한 건 다음부터 내가 맘대로 안 사고 결재로 올릴게.`, 'ai');
+  clearCards();
+  const el = addCard(`<h3>후회 체크 <span class="muted">${esc(rc.id)}</span></h3><table>${rc.lines.map((l, i) => `<tr><td>${esc(l.name)} <span class="muted">${esc(l.category)}</span></td><td class="r"><button class="btn" data-i="${i}" data-v="good">잘 샀어</button> <button class="btn" data-i="${i}" data-v="bad">별로</button></td></tr>`).join('')}</table><div id="chg"></div>`);
+  el.querySelectorAll('button[data-v]').forEach((b) => b.onclick = async () => {
+    const l = rc.lines[b.dataset.i]; const r = await post('/api/regret', { receiptId: rc.id, line: l.name, answer: b.dataset.v });
+    b.closest('td').innerHTML = b.dataset.v === 'bad' ? '<b style="color:#b42318">별로</b>' : '<b style="color:#1f8a5b">잘 샀어</b>';
+    if (r.change) { el.querySelector('#chg').innerHTML += `<div class="changed"><b>문턱이 바뀌었어요</b><br>${esc(r.change.rule)}: ${esc(r.change.before)} → <b>${esc(r.change.after)}</b><div class="muted">이유: ${esc(r.change.reason)}</div></div>`; say(`알겠어. 앞으로 ${l.category}은(는) 내가 바로 안 사고 결재로 올릴게.`, 'ai'); }
+    refresh();
+  });
+};
+
+async function refresh() {
+  const s = await fetch('/api/state').then((r) => r.json());
+  $('#llmBadge').textContent = s.llm.skt ? 'SKT A.X K2 연결됨' : s.llm.openai ? 'OpenAI 연결됨' : 'LLM 없음 (규칙만)';
+  $('#amt').value = s.rules.approvalAmount;
+  $('#cats').innerHTML = Object.entries(s.rules.categoryMode).map(([k, v]) => `<button class="btn ${v === 'approve' ? 'primary' : ''}" data-cat="${esc(k)}">${esc(k)}: ${v === 'approve' ? '결재' : '자동'}</button>`).join('');
+  document.querySelectorAll('[data-cat]').forEach((b) => b.onclick = async () => { const k = b.dataset.cat; await post('/api/rules', { categoryMode: { [k]: s.rules.categoryMode[k] === 'approve' ? 'auto' : 'approve' } }); refresh(); });
+  $('#budget').textContent = `월 ${won(s.budget.monthly)} 중 ${won(s.budget.spent)} 사용 · 남은 예산 ${won(s.budget.monthly - s.budget.spent)}`;
+  $('#hist').innerHTML = s.ruleHistory.length ? s.ruleHistory.map((h) => `<div class="changed">${esc(h.rule)}: ${esc(h.before)} → <b>${esc(h.after)}</b><div class="muted">${esc(h.reason)} · ${new Date(h.at).toLocaleTimeString('ko-KR')}</div></div>`).join('') : '아직 없음';
+  $('#rcpts').innerHTML = s.receipts.length ? s.receipts.map((r) => `<div class="box" style="margin:6px 0">${esc(r.id)} · ${esc(r.outfit)} · <b>${won(r.total)}</b> · ${esc(r.by)}</div>`).join('') : '아직 없음';
+  $('#log').innerHTML = s.log.map((l) => `<li><time>${new Date(l.at).toLocaleTimeString('ko-KR')}</time>${esc(l.text)}</li>`).join('');
+}
+$('#saveAmt').onclick = async () => { await post('/api/rules', { approvalAmount: Number($('#amt').value) }); refresh(); };
+refresh();
+</script>
+</body>
+</html>

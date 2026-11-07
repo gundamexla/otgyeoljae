@@ -1,0 +1,9 @@
+[
+  {"id":"p1","name":"싱글 블레이저 네이비","price":89000,"seller":"샘플몰 A","refundable":true,"image":""},
+  {"id":"p2","name":"옥스퍼드 셔츠 화이트","price":29000,"seller":"샘플몰 A","refundable":true,"image":""},
+  {"id":"p3","name":"세미와이드 슬랙스 네이비","price":39000,"seller":"샘플몰 B","refundable":true,"image":""},
+  {"id":"p4","name":"더비 슈즈 블랙 (시즌오프)","price":59000,"seller":"샘플몰 C","refundable":false,"image":""},
+  {"id":"p5","name":"카라 니트 베이지","price":45000,"seller":"샘플몰 B","refundable":true,"image":""},
+  {"id":"p6","name":"와이드 슬랙스 그레이","price":35000,"seller":"샘플몰 B","refundable":true,"image":""},
+  {"id":"p7","name":"무지 크루 양말 5켤레","price":9900,"seller":"늘 사던 몰","refundable":true,"image":""}
+]
