@@ -1,0 +1,10 @@
+app/
+build/
+obsidian/
+**/bin/
+**/obj/
+**/*.sqlite3*
+**/*.gguf
+**/native-token.txt
+tests/engine-artifacts/
+tests/compact-tools/

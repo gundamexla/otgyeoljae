@@ -1,0 +1,12 @@
+{
+  "reviewedOn": "2026-11-06",
+  "catalog": "https://galpi-ai-studio.vercel.app/#/projects",
+  "sources": [
+    {"name":"agent-desktop","url":"https://github.com/vercel-labs/agent-desktop","license":"Apache-2.0","version":"v1.1.0","integration":"Existing native executable now used for bounded Notepad SetValue and Calculator Click with observed refs and readback.","implementation":"DesktopActions.cs; DesktopTools.cs"},
+    {"name":"seosoyoung-revision-skill","url":"https://github.com/eiaserinnys/seosoyoung-revision-skill","license":"MIT","integration":"Meaning/subject fidelity, remove unnecessary expansion, preserve voice: independently implemented short dialogue criteria, not the full upstream three-pass workflow.","implementation":"KoreanDialogueReview.cs; ReplyQuality.cs"},
+    {"name":"LangGraph","url":"https://docs.langchain.com/oss/python/langgraph/overview","integration":"Shared explicit state and route/tool/generate/review/commit stages implemented natively in C#. Python package is not a runtime dependency. Session state is not durable cross-restart execution.","implementation":"ConversationRules.cs; SessionStore.cs; Program.cs"},
+    {"name":"single-agent-loop-kit","url":"https://github.com/anthropics/single-agent-loop-kit","license":"Apache-2.0","integration":"Same-cases before/after measurements, preserved raw outputs and independent semantic review. No upstream code or paid API copied into the runtime.","implementation":"training/run-dialogue-review.py; training/compare-dialogue-reviews.py"}
+  ],
+  "inference":"Existing Qwen3.5-4B Q4_K_M, CPU only, no paid model API",
+  "scope":"The four resources recommended in the preceding response. Deferred research/weight-editing projects were not installed."
+}
