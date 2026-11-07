@@ -29,3 +29,7 @@ POST /api/agent, /api/quote, /api/approve, /api/feedback, /api/rules, /api/reset
 
 ## 팀
 허우민(익뇽, gundamexla), SB(LSB04).
+
+## 서버에 연결된 모바일 UI (로컬 개발)
+
+반응형 개선과 기존 구매 서버 연동은 [MOBILE-INTEGRATION.md](MOBILE-INTEGRATION.md)를 참고하세요. `npm --prefix moa-mobile ci` 후 `npm run build:mobile`, `npm start`로 실행하고 `/mobile/`에서 확인합니다. 기존 공개 모바일 URL과 Vercel 배포는 이 로컬 변경만으로 바뀌지 않습니다.

@@ -1,32 +1,27 @@
 {
+  "$schema": "https://openapi.vercel.sh/vercel.json",
   "version": 2,
-  "builds": [
-    {
-      "src": "api/index.mjs",
-      "use": "@vercel/node",
-      "config": {
-        "includeFiles": [
-          "data/**"
-        ]
-      }
-    },
-    {
-      "src": "public/**",
-      "use": "@vercel/static"
+  "framework": null,
+  "installCommand": "npm --prefix moa-mobile ci --no-audit --no-fund",
+  "buildCommand": "npm run build:mobile",
+  "outputDirectory": "public",
+  "functions": {
+    "api/index.mjs": {
+      "includeFiles": "data/**"
     }
-  ],
-  "routes": [
+  },
+  "rewrites": [
     {
-      "src": "/api/(.*)",
-      "dest": "/api/index.mjs"
+      "source": "/api/:path*",
+      "destination": "/api/index"
     },
     {
-      "src": "/",
-      "dest": "/public/index.html"
+      "source": "/mobile",
+      "destination": "/mobile/index.html"
     },
     {
-      "src": "/(.*)",
-      "dest": "/public/$1"
+      "source": "/mobile/",
+      "destination": "/mobile/index.html"
     }
   ]
 }
