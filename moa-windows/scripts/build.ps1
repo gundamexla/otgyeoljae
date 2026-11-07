@@ -11,7 +11,7 @@ $output = Join-Path $appDir 'MoaLocal.exe'
 & $compiler /nologo /target:winexe /main:Moa.Program /optimize+ /codepage:65001 /utf8output "/out:$output" /reference:System.dll /reference:System.Core.dll /reference:System.Drawing.dll /reference:System.Windows.Forms.dll /reference:System.Web.Extensions.dll @sources
 if ($LASTEXITCODE -ne 0) { throw 'Moa build failed.' }
 foreach ($motion in @('idle','listen','work','done','confirm')) {
-    $source = Join-Path $projectRoot "hackathon-archive/public/assets/moa-$motion.gif"
+    $source = Join-Path $moaRoot "assets/moa-$motion.gif"
     $target = Join-Path $assetDir "moa-$motion.gif"
     if ((Test-Path -LiteralPath $target) -and (Get-FileHash -LiteralPath $source).Hash -eq (Get-FileHash -LiteralPath $target).Hash) { continue }
     Copy-Item -LiteralPath $source -Destination $assetDir
