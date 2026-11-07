@@ -65,7 +65,8 @@ public sealed class BrowserWorkflows(EngineOptions options, SiteRegistry sites) 
                 if (matches.Length == 0 && !open.Success) return null;
                 if (matches.Length != 1) return matches.Length == 0 ? "등록한 사이트 이름으로 말해 줘. 예: ‘갈피 조작해줘’." : "사이트가 여러 개예요. 이름을 더 정확히 골라 줘: " + string.Join(", ", matches.Select(s => s.Name));
                 var target = matches[0];
-                if (context.Browser is null || context.Browser.Page.IsClosed || new Uri(context.Browser.Page.Url).GetLeftPart(UriPartial.Authority) != new Uri(target.Url).GetLeftPart(UriPartial.Authority))
+                if (context.Browser is null || context.Browser.Page.IsClosed || new Uri(context.Browser.Page.Url).GetLeftPart(UriPartial.Authority) != new Uri(target.Url).GetLeftPart(UriPartial.Authority) ||
+                    open.Success && new Uri(context.Browser.Page.Url).AbsolutePath != new Uri(target.Url).AbsolutePath)
                 {
                     var session = await Ensure(); var page = await session.NewPageAsync();
                     var response = await page.GotoAsync(target.Url, new() { WaitUntil = WaitUntilState.DOMContentLoaded });
