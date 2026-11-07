@@ -14,7 +14,8 @@
   header nav { margin-left:auto; display:flex; gap:6px; }
   header nav button { border:1px solid var(--line); background:#fff; padding:8px 14px; border-radius:999px; cursor:pointer; font-size:14px; }
   header nav button.on { background:var(--ink); color:#fff; border-color:var(--ink); }
-  .badge { font-size:12px; padding:3px 8px; border-radius:999px; background:#eef0ff; color:var(--brand); }
+  .badge { font-size:12px; padding:3px 8px; border-radius:12px; background:#eef0ff; color:var(--brand); max-width:320px; }
+  button:disabled { opacity:.5; cursor:default; }
   main { display:grid; grid-template-columns: 420px 1fr; gap:20px; padding:20px 24px; max-width:1400px; margin:0 auto; }
   .panel { background:var(--card); border:1px solid var(--line); border-radius:16px; }
   .chat { display:flex; flex-direction:column; height:calc(100vh - 110px); }
@@ -98,11 +99,17 @@
   <section class="card"><h3>실행 기록</h3><ul class="log" id="log"></ul></section>
 </main></div>
 
-<script>
+<script type="module">
+import { apiStatusLabel, requestStatusLabel } from './api-status.js';
 const $ = (s) => document.querySelector(s);
 const won = (n) => Number(n).toLocaleString('ko-KR') + '원';
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
-const post = (u, b) => fetch(u, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(b) }).then((r) => r.json());
+const post = async (u, b) => {
+  const r = await fetch(u, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(b) });
+  const result = await r.json();
+  if (!r.ok) throw Object.assign(new Error(result.error || '요청을 처리하지 못했어요.'), { status: r.status });
+  return result;
+};
 
 document.querySelectorAll('header nav button').forEach((b) => b.onclick = () => {
   document.querySelectorAll('header nav button').forEach((x) => x.classList.toggle('on', x === b));
@@ -112,36 +119,63 @@ document.querySelectorAll('header nav button').forEach((b) => b.onclick = () => 
 function say(text, who) { const d = document.createElement('div'); d.className = 'm ' + who; d.textContent = text; $('#msgs').appendChild(d); $('#msgs').scrollTop = 1e9; return d; }
 function clearCards() { $('#cards').innerHTML = ''; }
 function addCard(html) { const d = document.createElement('div'); d.className = 'card'; d.innerHTML = html; $('#cards').prepend(d); return d; }
+async function quoteAction(el, q, action) {
+  if (el.dataset.busy === 'true' || q.status !== 'pending') return;
+  el.dataset.busy = 'true';
+  el.querySelectorAll('[data-a]').forEach(b => b.disabled = true);
+  try { await action(); }
+  catch (e) {
+    if (e.status === 409 || e.status === 404) q.status = 'unavailable';
+    say('오류: ' + e.message, 'sys');
+  } finally {
+    el.dataset.busy = 'false';
+    el.querySelectorAll('[data-a]').forEach(b => b.disabled = q.status !== 'pending' || (b.dataset.a === 'alt' && !q.alternative));
+    el.querySelector('[data-quote-status]').textContent = ({ paid:'모의 결제 완료', rejected:'반려 완료 · 결제하지 않았어요', replaced:'새 대안으로 변경됨', unavailable:'이 견적은 더 이상 처리할 수 없어요' })[q.status] || '';
+    refresh();
+  }
+}
 
 async function ask(text) {
   say(text, 'me'); const wait = say('볼티가 생각 중… (의도 해석 → 상품 연결 → 문턱 판정)', 'sys');
   try {
     const r = await post('/api/chat', { text });
     wait.remove(); say(r.reply || r.error, 'ai');
-    if (r.provider) say('의도 해석: ' + r.provider, 'sys');
+    say(requestStatusLabel(r.execution), 'sys');
     clearCards();
     if (r.intent?.evidence?.length) addCard(`<h3>요청 해석 <span class="muted">${esc(r.intent.occasion || '')} ${esc(r.intent.date || '')}</span></h3><ul class="ev">${r.intent.evidence.map((e) => `<li><span class="src">${esc(e.source)}</span>${esc(e.text)}</li>`).join('')}</ul>`);
     for (const c of (r.cards || []).reverse()) render(c);
-  } catch (e) { wait.textContent = '오류: ' + e.message; }
+  } catch (e) { wait.remove(); say('오류: ' + e.message, 'sys'); }
   refresh();
 }
 function lineRows(lines) { return lines.map((l) => `<tr><td>${esc(l.name)}<div class="muted">${esc(l.seller)} · ${esc(l.source || '')}${l.refundable === false ? ' · <b style="color:#b42318">환불 불가</b>' : ''}</div></td><td class="r">${won(l.price)}</td></tr>`).join(''); }
 function render(c) {
   const q = c.quote;
-  if (c.kind === 'proposal') addCard(`<h3>착장 제안 <span class="pill ${q.decision}">${q.decision === 'approve' ? '결재 필요' : q.decision === 'auto' ? '자동 처리' : '구매 불필요'}</span></h3><b>${esc(q.outfit)}</b><table>${lineRows(q.lines)}<tr><td class="muted">배송비</td><td class="r">${won(q.shipping)}</td></tr><tr><td><b>총액</b></td><td class="r total">${won(q.total)}</td></tr></table>`);
+  if (c.kind === 'proposal') addCard(`<h3>착장 제안 <span class="pill ${q.decision}">${q.replaces && q.status === 'pending' && q.decision !== 'skip' ? '변경안 승인 대기' : q.decision === 'approve' ? '결재 필요' : q.decision === 'auto' ? '자동 처리' : '구매 불필요'}</span></h3><b>${esc(q.outfit)}</b><table>${lineRows(q.lines)}<tr><td class="muted">배송비</td><td class="r">${won(q.shipping)}</td></tr><tr><td><b>총액</b></td><td class="r total">${won(q.total)}</td></tr></table>`);
   if (c.kind === 'skip') addCard(`<h3>안 사는 게 이득 <span class="pill skip">반려 제안</span></h3><ul class="why">${c.items.map((s) => `<li><b>${esc(s.name)}</b> (${won(s.price)}) · ${esc(s.reason)}</li>`).join('')}</ul><p class="muted">제안에서 빼고 총액을 다시 계산했어요. 아낀 돈: ${won(c.items.reduce((a, s) => a + s.price, 0))}</p>`);
   if (c.kind === 'approval') {
     const el = addCard(`<h3>결재 서류 <span class="pill approve">사람 결재</span></h3>
       <div class="grid2"><div class="box"><div class="muted">무엇을</div><b>${esc(q.outfit)}</b><div class="total">${won(q.total)}</div><div class="muted">이번 달 남은 예산 ${won(q.remaining)} → 결제 후 ${won(q.remaining - q.total)}</div></div>
-      <div class="box"><div class="muted">왜 결재로 올렸나 (규칙)</div><ul class="why">${q.why.map((w) => `<li>${esc(w)}</li>`).join('')}</ul></div></div>
+      <div class="box"><div class="muted">승인 전 확인</div><ul class="why">${q.why.map((w) => `<li>${esc(w)}</li>`).join('') || '<li>선택한 대안의 상품과 금액을 확인해 주세요. 아직 결제하지 않았어요.</li>'}</ul></div></div>
       <div class="grid2" style="margin-top:12px"><div class="box"><div class="muted">근거</div><ul class="ev">${(q.evidence || []).map((e) => `<li><span class="src">${esc(e.source)}</span>${esc(e.text)}</li>`).join('') || '<li class="muted">대화 내용</li>'}</ul></div>
       <div class="box"><div class="muted">포기한 대안</div>${q.alternative ? `<b>${esc(q.alternative.name)}</b> · ${won(q.alternative.total)}<div class="muted">${q.alternative.decision === 'auto' ? '문턱 안이라 자동 처리 가능했던 안' : esc(q.alternative.why.join(', '))}</div>` : '없음'}
       <div class="muted" style="margin-top:8px">잘못되면: 환불 가능 상품은 7일 안 취소, 환불 불가 상품은 결제 전 여기서 빼세요.</div></div></div>
-      <div class="row"><button class="btn primary" data-a="ok">승인하고 결제 (시뮬레이션)</button><button class="btn" data-a="alt">대안으로 바꾸기</button><button class="btn" data-a="no">반려</button></div>`);
+      <div class="row"><button class="btn primary" data-a="ok">승인하고 결제 (시뮬레이션)</button><button class="btn" data-a="alt" ${q.alternative ? '' : 'disabled'}>대안으로 바꾸기</button><button class="btn" data-a="no">반려</button></div><p class="muted" role="status" data-quote-status></p>`);
     const idem = crypto.randomUUID();
-    el.querySelector('[data-a=ok]').onclick = async (ev) => { ev.target.disabled = true; const r = await post('/api/approve', { quoteId: q.id, idemKey: idem }); render({ kind:'receipt', receipt:r.receipt }); say(`결재 받았어. ${won(r.receipt.total)} 결제 처리했고 영수증 남겼어. 일주일 뒤에 잘 샀는지 물어볼게.`, 'ai'); refresh(); };
-    el.querySelector('[data-a=no]').onclick = async () => { await post('/api/approve', { quoteId: q.id, action:'reject' }); say('반려 확인. 아무것도 결제 안 했어.', 'ai'); refresh(); };
-    el.querySelector('[data-a=alt]').onclick = () => say(q.alternative ? `${q.alternative.name}(${won(q.alternative.total)})로 가면 문턱 안이라 바로 처리할 수 있어. 데모에선 승인 흐름을 보여줄게.` : '대안이 없어.', 'ai');
+    el.querySelector('[data-a=ok]').onclick = () => quoteAction(el, q, async () => {
+      const r = await post('/api/approve', { quoteId:q.id, idemKey:idem }); q.status = 'paid';
+      render({ kind:'receipt', receipt:r.receipt }); say(`결재 받았어. ${won(r.receipt.total)} 모의 결제했고 영수증 남겼어.`, 'ai');
+    });
+    el.querySelector('[data-a=no]').onclick = () => quoteAction(el, q, async () => {
+      await post('/api/approve', { quoteId:q.id, action:'reject' }); q.status = 'rejected';
+      say('반려 확인. 아무것도 결제 안 했어.', 'ai');
+    });
+    el.querySelector('[data-a=alt]').onclick = () => quoteAction(el, q, async () => {
+      const r = await post('/api/alternative', { quoteId:q.id }); q.status = 'replaced';
+      clearCards(); render({ kind:'proposal', quote:r.quote });
+      if (r.quote.skipped.length) render({ kind:'skip', items:r.quote.skipped });
+      if (r.quote.decision !== 'skip') render({ kind:'approval', quote:r.quote });
+      say(r.reply, 'ai');
+    });
   }
   if (c.kind === 'receipt') { const r = c.receipt; addCard(`<h3>영수증 <span class="pill paid">${esc(r.by)}</span> <span class="muted">${esc(r.id)} · 시뮬레이션 결제</span></h3><table>${r.lines.map((l) => `<tr><td>${esc(l.name)}</td><td class="r">${won(l.price)}</td></tr>`).join('')}<tr><td><b>합계</b></td><td class="r total">${won(r.total)}</td></tr></table><p class="muted">${new Date(r.at).toLocaleString('ko-KR')} · 실제 결제 아님</p>`); }
 }
@@ -151,11 +185,30 @@ document.querySelectorAll('[data-q]').forEach((b) => b.onclick = () => ask(b.dat
 // ---- 모아: 면접 옷 시나리오 ----
 const MOA_Q = '다음 주 면접에 입을 옷이 필요해. 이 재킷 괜찮아 보이는데 사도 될까?';
 let moaReceipt = null;
-function btnRow(el, list) { const row = document.createElement('div'); row.className = 'row'; for (const [label, fn, primary] of list) { const b = document.createElement('button'); b.className = 'btn' + (primary ? ' primary' : ''); b.textContent = label; b.onclick = () => { row.querySelectorAll('button').forEach((x) => x.disabled = true); fn(); }; row.appendChild(b); } el.appendChild(row); }
+function btnRow(el, list) {
+  const row = document.createElement('div'); row.className = 'row';
+  for (const [label, fn, primary] of list) {
+    const b = document.createElement('button'); b.className = 'btn' + (primary ? ' primary' : ''); b.textContent = label;
+    b.onclick = async () => {
+      if (row.dataset.busy === 'true') return;
+      row.dataset.busy = 'true'; row.querySelectorAll('button').forEach(x => x.disabled = true);
+      try { await fn(); }
+      catch (e) {
+        say('오류: ' + e.message, 'sys');
+        if (e.status !== 409 && e.status !== 404) { row.dataset.busy = 'false'; row.querySelectorAll('button').forEach(x => x.disabled = false); }
+      }
+    };
+    row.appendChild(b);
+  }
+  el.appendChild(row);
+}
 $('#moaGo').onclick = async () => {
   say(MOA_Q, 'me'); const wait = say('모아가 확인 중… (의도 해석 → 예산 → 옷장)', 'sys');
-  const r = await post('/api/moa/start', { text: MOA_Q }); wait.remove();
-  if (r.provider) say('의도 해석: ' + r.provider, 'sys');
+  let r;
+  try { r = await post('/api/moa/start', { text: MOA_Q }); }
+  catch (e) { wait.remove(); say('오류: ' + e.message, 'sys'); return; }
+  wait.remove();
+  say(requestStatusLabel(r.execution), 'sys');
   clearCards();
   if (r.intent?.evidence?.length) addCard(`<h3>요청 해석 <span class="muted">${esc(r.intent.occasion || '')} ${esc(r.intent.date || '')}</span></h3><ul class="ev">${r.intent.evidence.map((e) => `<li><span class="src">${esc(e.source)}</span>${esc(e.text)}</li>`).join('')}</ul>`);
   say(`재킷은 ${won(r.jacket.price)}이야. 근데 지금 잔액은 ${won(r.wallet.balance)}인데, 이번 주 생활비로 ${won(r.wallet.reserve)}을 남겨두기로 했잖아. 옷에 쓸 수 있는 돈은 ${won(r.usable)}이야. 이 재킷을 사면 생활비를 쓰게 돼.`, 'ai');
@@ -214,7 +267,7 @@ $('#weekLater').onclick = async () => {
 
 async function refresh() {
   const s = await fetch('/api/state').then((r) => r.json());
-  $('#llmBadge').textContent = s.llm.skt ? 'SKT A.X K2 연결됨' : s.llm.openai ? 'OpenAI 연결됨' : 'LLM 없음 (규칙만)';
+  $('#llmBadge').textContent = apiStatusLabel(s.llm);
   $('#amt').value = s.rules.approvalAmount;
   $('#cats').innerHTML = Object.entries(s.rules.categoryMode).map(([k, v]) => `<button class="btn ${v === 'approve' ? 'primary' : ''}" data-cat="${esc(k)}">${esc(k)}: ${v === 'approve' ? '결재' : '자동'}</button>`).join('');
   document.querySelectorAll('[data-cat]').forEach((b) => b.onclick = async () => { const k = b.dataset.cat; await post('/api/rules', { categoryMode: { [k]: s.rules.categoryMode[k] === 'approve' ? 'auto' : 'approve' } }); refresh(); });
