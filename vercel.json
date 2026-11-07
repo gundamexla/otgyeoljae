@@ -12,6 +12,14 @@
   },
   "rewrites": [
     {
+      "source": "/finance",
+      "destination": "/finance/index.html"
+    },
+    {
+      "source": "/finance/",
+      "destination": "/finance/index.html"
+    },
+    {
       "source": "/api/:path*",
       "destination": "/api/index"
     },

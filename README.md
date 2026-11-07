@@ -14,13 +14,13 @@
 - 중복 요청·중복 승인 방지. 반려 뒤 결제 금지. 실패·결과 불명 시연과 결과 조회 후 재시도 흐름 지원.
 
 ## 실행
-Node.js 22 이상, 외부 npm 의존성 없음. .env.example을 .env로 복사하고 OBA_API_KEY 설정 후 npm start. http://localhost:4400
+Node.js 22 이상. `.env.example`을 `.env`로 복사하고 `OBA_API_KEY` 설정 후 `npm --prefix moa-mobile ci`, `npm run build:mobile`, `npm start`. http://localhost:4400
 Vercel은 api/index.mjs + vercel.json 사용. OBA_API_KEY를 서버용 Sensitive 환경변수로 설정.
 
 ## 검증·제약
-**실제 주문·금융 결제는 하지 않으며 SKT 결제 SDK 연동이 아닙니다.** SKT A.X K2를 사용한 서버 제어형 모의 결제입니다. 상품·옷장·일정은 샘플이며 외부 상품몰·착장 서비스는 아직 연결되지 않았습니다.
+**실제 주문·금융 결제는 하지 않으며 SKT 결제 SDK 연동이 아닙니다.** SKT A.X K2를 사용한 서버 제어형 모의 결제입니다. 상품·옷장·일정은 샘플입니다. 착장 버튼으로 기존 사진 착장 사이트를 열 수 있고, 모의 결제 후 같은 Vercel 주소의 금융 창에 서버 영수증을 표시합니다. 외부 상품몰 주문과 자동 사진 전송은 하지 않습니다.
 로컬은 세션별 JSON 저장, Vercel은 인스턴스 /tmp 저장으로 재배포·콜드 스타트 시 초기화될 수 있습니다. 장기 저장 보장이 없습니다. 브라우저별 세션은 분리합니다.
-음성 전화·문자·자녀에게 실제 알림·사진 시착·실제 상품 검색·장기 학습은 구현하지 않았습니다. 키·개인정보는 저장소에 올리지 않습니다.
+음성 전화·문자·자녀에게 실제 알림·실제 상품 검색·장기 학습은 구현하지 않았습니다. 사진 시착은 별도 착장 사이트에서 사진 선택과 동의 후 진행합니다. 키·개인정보는 저장소에 올리지 않습니다.
 
 ## API
 GET /api/health, /api/state, /api/jobs/:quoteId
@@ -30,6 +30,8 @@ POST /api/agent, /api/quote, /api/approve, /api/feedback, /api/rules, /api/reset
 ## 팀
 허우민(익뇽, gundamexla), SB(LSB04).
 
-## 서버에 연결된 모바일 UI (로컬 개발)
+## 공개 체험과 모바일 UI
 
-반응형 개선과 기존 구매 서버 연동은 [MOBILE-INTEGRATION.md](MOBILE-INTEGRATION.md)를 참고하세요. `npm --prefix moa-mobile ci` 후 `npm run build:mobile`, `npm start`로 실행하고 `/mobile/`에서 확인합니다. 기존 공개 모바일 URL과 Vercel 배포는 이 로컬 변경만으로 바뀌지 않습니다.
+[Vercel 공개 체험](https://otgyeoljae.vercel.app/) · [휴대폰 화면](https://otgyeoljae.vercel.app/mobile/) · [QR PNG](qr/moa-qr.png) · [QR SVG](qr/moa-qr.svg)
+
+휴대폰은 `/mobile/`로 자동 이동합니다. PC와 휴대폰 모두 모아 캐릭터와 착장·금융 버튼을 제공합니다. 모의 결제를 승인하면 `/finance/`에서 상품, 배송비, 결제 금액, 잔액을 확인할 수 있습니다. [Vercel 연결 설명](VERCEL-INTEGRATION.md)과 [모바일 서버 연동](MOBILE-INTEGRATION.md)을 참고하세요.
