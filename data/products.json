@@ -1,9 +1,16 @@
 [
-  {"id":"p1","name":"싱글 블레이저 네이비","price":89000,"seller":"샘플몰 A","refundable":true,"image":""},
-  {"id":"p2","name":"옥스퍼드 셔츠 화이트","price":29000,"seller":"샘플몰 A","refundable":true,"image":""},
-  {"id":"p3","name":"세미와이드 슬랙스 네이비","price":39000,"seller":"샘플몰 B","refundable":true,"image":""},
-  {"id":"p4","name":"더비 슈즈 블랙 (시즌오프)","price":59000,"seller":"샘플몰 C","refundable":false,"image":""},
-  {"id":"p5","name":"카라 니트 베이지","price":45000,"seller":"샘플몰 B","refundable":true,"image":""},
-  {"id":"p6","name":"와이드 슬랙스 그레이","price":35000,"seller":"샘플몰 B","refundable":true,"image":""},
-  {"id":"p7","name":"무지 크루 양말 5켤레","price":9900,"seller":"늘 사던 몰","refundable":true,"image":""}
+ {"id":"p1","name":"싱글 블레이저 네이비","price":89000,"seller":"샘플몰 A","refundable":true,"category":"아우터","type":"블레이저","color":"네이비","care":"dry_clean","inStock":true},
+ {"id":"p2","name":"옥스퍼드 셔츠 화이트","price":29000,"seller":"샘플몰 A","refundable":true,"category":"상의","type":"셔츠","color":"화이트","care":"machine_wash","inStock":true},
+ {"id":"p3","name":"세미와이드 슬랙스 네이비","price":39000,"seller":"샘플몰 B","refundable":true,"category":"하의","type":"슬랙스","color":"네이비","care":"machine_wash","waist":"M 허리 80cm · 샘플 치수","inStock":true},
+ {"id":"p4","name":"더비 슈즈 블랙 (시즌오프)","price":59000,"seller":"샘플몰 C","refundable":false,"category":"신발","type":"더비","color":"블랙","inStock":true},
+ {"id":"p5","name":"카라 니트 베이지","price":45000,"seller":"샘플몰 B","refundable":true,"category":"상의","type":"카라니트","color":"베이지","care":"machine_wash","inStock":true},
+ {"id":"p6","name":"와이드 슬랙스 그레이","price":35000,"seller":"샘플몰 B","refundable":true,"category":"하의","type":"슬랙스","color":"그레이","care":"machine_wash","waist":"M 허리 80cm · 샘플 치수","inStock":true},
+ {"id":"p7","name":"무지 크루 양말 5켤레","price":9900,"seller":"늘 사던 몰","refundable":true,"category":"잡화","type":"양말","color":"블랙","care":"machine_wash","restock":true,"inStock":true},
+ {"id":"i-jacket","name":"싱글 재킷 차콜","price":89000,"seller":"샘플몰 A","refundable":true,"category":"아우터","type":"재킷","color":"차콜","care":"dry_clean","inStock":true},
+ {"id":"i-wash","name":"이지케어 슬랙스 차콜","price":39000,"seller":"샘플몰 B","refundable":true,"category":"하의","type":"슬랙스","color":"차콜","care":"machine_wash","waist":"M 허리 80cm · 착용감은 직접 확인 필요","inStock":true},
+ {"id":"i-dry","name":"울 블렌드 슬랙스 차콜","price":45000,"seller":"샘플몰 B","refundable":true,"category":"하의","type":"슬랙스","color":"차콜","care":"dry_clean","waist":"치수 정보 미확인","inStock":true},
+ {"id":"d-tissue","name":"늘 사던 두루마리 휴지","price":23000,"seller":"늘 사던 몰","refundable":true,"category":"생활","type":"휴지","color":"화이트","restock":true,"inStock":true},
+ {"id":"d-gift","name":"생신 꽃 선물 세트","price":49000,"seller":"처음 만나는 꽃집 (샘플)","refundable":false,"category":"선물","type":"꽃","color":"혼합","newSeller":true,"inStock":true},
+ {"id":"d-subscription","name":"이미 이용 중인 스트리밍 구독","price":14900,"seller":"샘플 구독 서비스","refundable":false,"category":"구독","type":"구독","color":"없음","subscription":true,"duplicateSubscription":true,"inStock":true},
+ {"id":"d-risk","name":"급한 대리 송금용 상품권 (위험 사례)","price":50000,"seller":"미확인 판매자","refundable":false,"category":"선물","type":"상품권","color":"없음","risky":true,"newSeller":true,"inStock":true}
 ]

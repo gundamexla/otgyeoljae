@@ -1,1 +1,11 @@
-{"name":"otgyeoljae","version":"0.1.0","type":"module","scripts":{"start":"node server.mjs"}}
+{
+  "name": "otgyeoljae",
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "start": "node server.mjs"
+  },
+  "engines": {
+    "node": "22.x"
+  }
+}

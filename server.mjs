@@ -1,266 +1,42 @@
-// 옷결재 (OBA.RUN 2nd, SKT 트랙) - 의존성 없는 Node 서버
-// 판정은 규칙 엔진(judge), LLM(SKT A.X K2)은 의도 해석과 문장 작성만 담당한다.
+// 모아: A.X 요청 해석 + 서버 규칙 + 모의 결제. 실제 금융 거래 없음.
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-
-const ROOT = path.dirname(fileURLToPath(import.meta.url));
-loadEnv(path.join(ROOT, '.env'));
-const PORT = Number(process.env.PORT || 4400);
-const TODAY = '2026-11-07 (토)';
-
-const read = (f) => JSON.parse(fs.readFileSync(path.join(ROOT, 'data', f), 'utf8'));
-const calendar = read('calendar.json');
-const closet = read('closet.json');
-const outfits = read('outfits.json');
-const catalog = read('products.json');
-
-// ---- 상태 (데모용 메모리 저장) ----
-const state = {
-  rules: {
-    approvalAmount: 100000, // 주문 총액이 이 금액 이상이면 사람 결재
-    nonRefundableNeedsApproval: true,
-    duplicateSuggestSkip: true,
-    categoryMode: { 아우터: 'auto', 상의: 'auto', 하의: 'auto', 신발: 'auto', 잡화: 'auto' },
-  },
-  budget: { monthly: 300000, spent: 50000 },
-  quotes: {},
-  receipts: [],
-  log: [],
-  ruleHistory: [],
-  idem: new Set(),
-  // 모아 시나리오: 가상 지갑과 지난 구매 피드백, 사용자가 정한 확인 항목
-  wallet: { balance: 130000, reserve: 70000 },
-  feedback: [{ at: '2026-09-21', item: '리넨 셔츠 (9월 구매)', note: '드라이클리닝 맡기기 번거로워서 잘 안 입게 돼', rule: '관리 방법(물세탁 가능 여부) 먼저 확인' }],
-  checks: ['관리 방법(물세탁 가능 여부) 먼저 확인'],
-};
-const won = (n) => n.toLocaleString('ko-KR') + '원';
-const log = (type, text) => state.log.unshift({ at: new Date().toISOString(), type, text });
-
-// ---- LLM: SKT A.X K2 (OpenAI 호환 Chat Completions), 없으면 OpenAI 폴백 ----
-async function llm(messages, json = false) {
-  const tries = [];
-  if (process.env.OBA_API_KEY) tries.push({ name: 'SKT A.X K2', url: 'https://agent-os-biz.adot.ai/oba/v1/chat/completions', key: process.env.OBA_API_KEY, model: process.env.OBA_MODEL || 'skt/a.ll/A.X-K2-ADOT' });
-  if (process.env.OPENAI_API_KEY) tries.push({ name: 'OpenAI', url: 'https://api.openai.com/v1/chat/completions', key: process.env.OPENAI_API_KEY, model: process.env.OPENAI_MODEL || 'gpt-4o-mini' });
-  for (const t of tries) {
-    try {
-      const body = { model: t.model, messages, temperature: 0.4 };
-      if (json) body.response_format = { type: 'json_object' };
-      const r = await fetch(t.url, { method: 'POST', headers: { Authorization: `Bearer ${t.key}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(25000) });
-      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
-      const j = await r.json();
-      const content = j.choices?.[0]?.message?.content ?? '';
-      return { provider: t.name, content: json ? JSON.parse(content) : content };
-    } catch (e) {
-      log('llm-error', `${t.name} 실패: ${String(e.message).slice(0, 120)}`);
-    }
-  }
-  return null;
-}
-
-const context = () => `오늘은 ${TODAY}. 사용자 캘린더: ${JSON.stringify(calendar)}. 보유 옷장: ${closet.map((c) => `${c.color} ${c.name}(${c.category})`).join(', ')}.`;
-
-// ---- 네이버 쇼핑 검색 (키 있으면 실제 상품, 없으면 샘플 카탈로그) ----
-async function matchProduct(item) {
-  const sample = catalog.find((p) => p.id === item.productId);
-  if (process.env.NAVER_CLIENT_ID && process.env.NAVER_CLIENT_SECRET) {
-    try {
-      const u = 'https://openapi.naver.com/v1/search/shop.json?display=1&sort=sim&query=' + encodeURIComponent(item.keyword);
-      const r = await fetch(u, { headers: { 'X-Naver-Client-Id': process.env.NAVER_CLIENT_ID, 'X-Naver-Client-Secret': process.env.NAVER_CLIENT_SECRET }, signal: AbortSignal.timeout(6000) });
-      const j = await r.json();
-      const it = j.items?.[0];
-      if (it) return { ...sample, name: it.title.replace(/<[^>]+>/g, ''), price: Number(it.lprice), seller: it.mallName, link: it.link, image: it.image, source: '네이버 쇼핑' };
-    } catch (e) { log('api-error', '네이버 쇼핑 실패, 샘플 사용'); }
-  }
-  return { ...sample, source: '샘플 가격' };
-}
-
-// ---- 규칙 엔진: 판정은 여기서만 ----
-function judge(lines) {
-  const rules = state.rules;
-  const kept = [], skipped = [];
-  for (const l of lines) {
-    const dup = rules.duplicateSuggestSkip && closet.find((c) => c.category === l.category && c.color === l.color && c.type === l.type);
-    if (dup) skipped.push({ ...l, reason: `이미 ${dup.color} ${dup.name}이(가) 옷장에 있어요` });
-    else kept.push(l);
-  }
-  const shipping = kept.length ? 3000 : 0;
-  const total = kept.reduce((s, l) => s + l.price, 0) + shipping;
-  const remaining = state.budget.monthly - state.budget.spent;
-  const why = [];
-  if (total >= rules.approvalAmount) why.push(`총액 ${won(total)}이 결재 기준 ${won(rules.approvalAmount)} 이상`);
-  if (rules.nonRefundableNeedsApproval) kept.filter((l) => !l.refundable).forEach((l) => why.push(`${l.name}은(는) 환불 불가 상품`));
-  kept.filter((l) => rules.categoryMode[l.category] === 'approve').forEach((l) => why.push(`${l.category}은(는) 결재 카테고리로 지정됨 (후회 체크 반영)`));
-  if (total > remaining) why.push(`이번 달 남은 의류 예산 ${won(remaining)} 초과`);
-  const decision = kept.length === 0 ? 'skip' : why.length ? 'approve' : 'auto';
-  return { kept, skipped, shipping, total, remaining, why, decision };
-}
-
-async function buildOutfit(o) {
-  const lines = [];
-  for (const it of o.items) {
-    if (it.owned) continue;
-    const p = await matchProduct(it);
-    lines.push({ ...p, category: it.category, color: it.color, type: it.type });
-  }
-  return { outfit: o, ...judge(lines) };
-}
-
-// ---- 요청 처리 ----
-async function handleChat(text) {
-  log('request', `사용자: ${text}`);
-  // 1) 의도 해석 (LLM, JSON)
-  const sys = `${context()}\n너는 쇼핑 비서의 의도 해석기다. 사용자의 말을 JSON으로만 구조화해라. 키: intent("outfit"|"restock"|"other"), occasion(문자열), date(YYYY-MM-DD 또는 null, 캘린더 근거로), dress_code(문자열), budget_hint(숫자 또는 null), evidence(근거 배열, 각 항목은 {"source":"캘린더|옷장|대화","text":"..."}). 추측한 값은 evidence에 "추정"이라고 적어라.`;
-  const parsed = await llm([{ role: 'system', content: sys }, { role: 'user', content: text }], true);
-  let intent = parsed?.content || null;
-  if (!intent) intent = /양말|떨어/.test(text) ? { intent: 'restock' } : { intent: 'outfit', occasion: '결혼식 하객', date: '2026-11-08', evidence: [{ source: '캘린더', text: '11/8(일) 12:00 대학 동기 결혼식' }] };
-  if (!intent.intent) intent.intent = /양말|떨어/.test(text) ? 'restock' : 'outfit';
-
-  // 2) 상품 연결과 규칙 판정
-  if (intent.intent === 'restock') {
-    const o = outfits.find((x) => x.tag === 'restock');
-    const r = await buildOutfit(o);
-    const quote = makeQuote(r, intent);
-    if (r.decision === 'auto') {
-      const receipt = checkout(quote.id, 'auto-' + quote.id, '자동 처리');
-      const reply = await compose(text, r, 'auto');
-      return { reply, intent, provider: parsed?.provider, cards: [{ kind: 'receipt', receipt, quote }] };
-    }
-    return { reply: await compose(text, r, r.decision), intent, provider: parsed?.provider, cards: [{ kind: 'approval', quote }] };
-  }
-
-  const cands = outfits.filter((o) => o.tag === 'wedding');
-  const results = [];
-  for (const o of cands) results.push(await buildOutfit(o));
-  const main = results[0];
-  const alt = results[1];
-  const quote = makeQuote(main, intent, alt);
-  const cards = [{ kind: 'proposal', quote }];
-  if (main.skipped.length) cards.push({ kind: 'skip', items: main.skipped });
-  if (main.decision === 'approve') cards.push({ kind: 'approval', quote });
-  else if (main.decision === 'auto') cards.push({ kind: 'receipt', receipt: checkout(quote.id, 'auto-' + quote.id, '자동 처리'), quote });
-  const reply = await compose(text, main, main.decision, alt);
-  return { reply, intent, provider: parsed?.provider, cards };
-}
-
-function makeQuote(r, intent, alt) {
-  const id = crypto.randomUUID().slice(0, 8);
-  const q = { id, outfit: r.outfit.name, lines: r.kept, skipped: r.skipped, shipping: r.shipping, total: r.total, remaining: r.remaining, why: r.why, decision: r.decision, evidence: intent?.evidence || [], alternative: alt ? { name: alt.outfit.name, total: alt.total, decision: alt.decision, why: alt.why } : null, status: 'pending', createdAt: new Date().toISOString() };
-  state.quotes[id] = q;
-  log('judge', `${r.outfit.name}: ${r.decision === 'approve' ? '결재 올림' : r.decision === 'auto' ? '자동 처리' : '구매 불필요'} (${r.why.join(' / ') || '문턱 안'})`);
-  return q;
-}
-
-async function compose(userText, r, decision, alt) {
-  const facts = { decision, outfit: r.outfit.name, total: r.total, why: r.why, skipped: r.skipped.map((s) => `${s.name}: ${s.reason}`), alternative: alt ? `${alt.outfit.name} ${alt.total}원 (참고용 대안, 처리하지 않음)` : null };
-  const sys = `${context()}\n너는 친근한 캐릭터 쇼핑 비서 '볼티'다. 아래 판정 결과(facts)를 바꾸지 말고, 2~3문장 반말로 짧게 전해라. 판정은 규칙이 이미 정했다. decision이 approve면 '아직 결제 안 했고 네 결재를 기다린다'고 이유와 함께 말해라. auto면 처리했다고 말해라. skipped가 있으면 '안 사는 게 이득'이라고 말려라. alternative는 참고용으로만 언급하고 처리했다고 말하지 마라. 숫자는 facts 그대로만 써라.`;
-  // 상태를 바꾸는 문장(결제했다/승인됐다)은 서버가 확인한 사실만 쓴다. LLM 문장은 사용하지 않고 템플릿으로 고정.
-  void sys; void facts;
-  if (decision === 'auto') return `늘 사던 걸로 ${won(r.total)}에 처리했어. 영수증 남겨둘게.`;
-  return `${r.outfit.name}으로 골라봤어. 아직 결제는 안 했어. ${r.why.join(', ')}라서 네 결재가 필요해.${r.skipped.length ? '\n그리고 ' + r.skipped.map((s) => `${s.name}는 ${s.reason.replace('있어요', '있어')}`).join(', ') + '. 그건 안 사는 게 이득이라 빼두었어.' : ''}${alt ? `\n참고로 ${alt.outfit.name}(${won(alt.total)})은 문턱 안이라 바로 처리할 수 있는 대안이야.` : ''}`;
-}
-
-function checkout(quoteId, idemKey, by) {
-  const q = state.quotes[quoteId];
-  if (!q) throw new Error('견적을 찾을 수 없어요');
-  if (state.idem.has(idemKey) || q.status === 'paid') return state.receipts.find((x) => x.quoteId === quoteId);
-  state.idem.add(idemKey);
-  q.status = 'paid';
-  const receipt = { id: 'R-' + crypto.randomUUID().slice(0, 6).toUpperCase(), quoteId, outfit: q.outfit, lines: q.lines.map((l) => ({ name: l.name, price: l.price, category: l.category, seller: l.seller })), total: q.total, by, at: new Date().toISOString(), simulated: true, regret: null };
-  state.receipts.unshift(receipt);
-  state.budget.spent += q.total;
-  state.wallet.balance -= q.total;
-  log('pay', `${by}: ${q.outfit} ${won(q.total)} 시뮬레이션 결제 (${receipt.id})`);
-  return receipt;
-}
-
-// ---- 모아 시나리오 (면접 옷) ----
-async function moaStart(text) {
-  log('request', `사용자: ${text}`);
-  const sys = `${context()}\n너는 쇼핑 비서의 의도 해석기다. JSON으로만 답해라. 키: occasion, date(YYYY-MM-DD 또는 null), wanted_item(사용자가 사려는 물건), dress_code, evidence(배열, {"source":"캘린더|옷장|대화|추정","text":"..."}).`;
-  const parsed = await llm([{ role: 'system', content: sys }, { role: 'user', content: text }], true);
-  const intent = parsed?.content || { occasion: '면접', wanted_item: '재킷', evidence: [{ source: '대화', text }] };
-  const jacket = { name: '싱글 재킷 차콜', price: 89000, seller: '샘플몰 A', source: '샘플 가격' };
-  const usable = state.wallet.balance - state.wallet.reserve;
-  const owned = closet.find((c) => c.category === '아우터' && c.type === '재킷');
-  log('judge', `재킷 ${won(jacket.price)} > 사용 가능 ${won(usable)}: 생활비 침범 경고`);
-  return { provider: parsed?.provider, intent, wallet: state.wallet, usable, jacket, invades: jacket.price > usable, owned };
-}
-
-function moaQuote(b) {
-  const lines = (b.lines || []).map((l) => ({ name: String(l.name), price: Number(l.price), category: l.category || '하의', seller: l.seller || '샘플몰', refundable: true, source: '샘플 가격' }));
-  const shipping = lines.length ? 3000 : 0;
-  const total = lines.reduce((s, l) => s + l.price, 0) + shipping;
-  const after = state.wallet.balance - total;
-  const id = crypto.randomUUID().slice(0, 8);
-  const q = { id, outfit: b.title || '모아 결재', lines, reuse: b.reuse || [], shipping, total, after, reserve: state.wallet.reserve, extra: after - state.wallet.reserve, keepsReserve: after >= state.wallet.reserve, why: ['사람이 최종 승인하는 구매'], decision: 'approve', evidence: b.evidence || [], status: 'pending', createdAt: new Date().toISOString(), moa: true };
-  state.quotes[id] = q;
-  log('judge', `결재 카드: ${lines.map((l) => l.name).join(', ')} ${won(total)}, 구매 후 잔액 ${won(after)} (생활비 ${q.keepsReserve ? '유지' : '침범'})`);
-  return q;
-}
-
-function moaFeedback(b) {
-  const fb = { at: new Date().toISOString().slice(0, 10), item: String(b.item || ''), note: String(b.note || ''), rule: String(b.rule || '') };
-  state.feedback.unshift(fb);
-  let change = null;
-  if (b.apply && fb.rule && !state.checks.includes(fb.rule)) {
-    state.checks.push(fb.rule);
-    change = { at: new Date().toISOString(), rule: '구매 전 확인 항목', before: '없음', after: fb.rule, reason: `${fb.item}: ${fb.note}` };
-    state.ruleHistory.unshift(change);
-    log('rule', `확인 항목 추가: ${fb.rule}`);
-  }
-  log('regret', `구매 후 피드백: ${fb.item} → ${fb.note}`);
-  return { change, checks: state.checks };
-}
-
-function regret(receiptId, lineName, answer) {
-  const rc = state.receipts.find((r) => r.id === receiptId);
-  const line = rc?.lines.find((l) => l.name === lineName);
-  if (!line) throw new Error('구매 내역을 찾을 수 없어요');
-  line.regret = answer;
-  log('regret', `후회 체크: ${line.name} → ${answer === 'bad' ? '별로' : '잘 샀어'}`);
-  let change = null;
-  if (answer === 'bad' && state.rules.categoryMode[line.category] !== 'approve') {
-    const before = state.rules.categoryMode[line.category];
-    state.rules.categoryMode[line.category] = 'approve';
-    change = { at: new Date().toISOString(), rule: `${line.category} 카테고리`, before: before === 'auto' ? '자동 처리' : '결재', after: '결재', reason: `${line.name} 구매 후회` };
-    state.ruleHistory.unshift(change);
-    log('rule', `문턱 변경: ${change.rule} ${change.before} → ${change.after} (${change.reason})`);
-  }
-  return { change };
-}
-
-// ---- HTTP ----
-const send = (res, code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8' }); res.end(JSON.stringify(obj)); };
-const body = (req) => new Promise((ok) => { let d = ''; req.on('data', (c) => (d += c)); req.on('end', () => { try { ok(JSON.parse(d || '{}')); } catch { ok({}); } }); });
-
-http.createServer(async (req, res) => {
-  try {
-    const u = new URL(req.url, 'http://x');
-    if (req.method === 'POST' && u.pathname === '/api/chat') return send(res, 200, await handleChat(String((await body(req)).text || '').slice(0, 500)));
-    if (req.method === 'POST' && u.pathname === '/api/approve') { const b = await body(req); const q = state.quotes[b.quoteId]; if (b.action === 'reject') { if (q) q.status = 'rejected'; log('reject', `결재 반려: ${q?.outfit}`); return send(res, 200, { ok: true, rejected: true }); } return send(res, 200, { receipt: checkout(b.quoteId, b.idemKey || crypto.randomUUID(), '사용자 결재 승인') }); }
-    if (req.method === 'POST' && u.pathname === '/api/moa/start') { const b = await body(req); return send(res, 200, await moaStart(String(b.text || '').slice(0, 500))); }
-    if (req.method === 'POST' && u.pathname === '/api/moa/quote') { const b = await body(req); return send(res, 200, moaQuote(b)); }
-    if (req.method === 'POST' && u.pathname === '/api/moa/feedback') { const b = await body(req); return send(res, 200, moaFeedback(b)); }
-    if (req.method === 'POST' && u.pathname === '/api/regret') { const b = await body(req); return send(res, 200, regret(b.receiptId, b.line, b.answer)); }
-    if (req.method === 'POST' && u.pathname === '/api/rules') { const b = await body(req); if (b.approvalAmount) state.rules.approvalAmount = Number(b.approvalAmount); if (b.categoryMode) Object.assign(state.rules.categoryMode, b.categoryMode); log('rule', '사용자가 문턱 설정 변경'); return send(res, 200, state.rules); }
-    if (u.pathname === '/api/state') return send(res, 200, { wallet: state.wallet, feedback: state.feedback, checks: state.checks, rules: state.rules, budget: state.budget, receipts: state.receipts, log: state.log.slice(0, 60), ruleHistory: state.ruleHistory, llm: { skt: !!process.env.OBA_API_KEY, openai: !!process.env.OPENAI_API_KEY, naver: !!process.env.NAVER_CLIENT_ID } });
-    const file = path.join(ROOT, 'public', u.pathname === '/' ? 'index.html' : path.normalize(u.pathname).replace(/^([\\/])+/, ''));
-    if (!file.startsWith(path.join(ROOT, 'public')) || !fs.existsSync(file)) { res.writeHead(404); return res.end('not found'); }
-    const types = { '.html': 'text/html; charset=utf-8', '.css': 'text/css', '.js': 'text/javascript', '.png': 'image/png', '.svg': 'image/svg+xml' };
-    res.writeHead(200, { 'Content-Type': types[path.extname(file)] || 'application/octet-stream' });
-    fs.createReadStream(file).pipe(res);
-  } catch (e) {
-    send(res, 500, { error: e.message });
-  }
-}).listen(PORT, () => console.log(`옷결재: http://localhost:${PORT}  (SKT A.X K2: ${process.env.OBA_API_KEY ? 'on' : 'off'}, OpenAI: ${process.env.OPENAI_API_KEY ? 'on' : 'off'}, 네이버: ${process.env.NAVER_CLIENT_ID ? 'on' : 'off'})`));
-
-function loadEnv(p) {
-  if (!fs.existsSync(p)) return;
-  for (const line of fs.readFileSync(p, 'utf8').split(/\r?\n/)) {
-    const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/);
-    if (m && !process.env[m[1]]) process.env[m[1]] = m[2].replace(/^['"]|['"]$/g, '');
-  }
-}
+const ROOT=path.dirname(fileURLToPath(import.meta.url));
+loadEnv(path.join(ROOT,'.env'));
+const RUNTIME=process.env.MOA_RUNTIME_DIR||(process.env.VERCEL?'/tmp/moa-runtime':path.join(ROOT,'data','runtime'));
+fs.mkdirSync(RUNTIME,{recursive:true});
+const read=f=>JSON.parse(fs.readFileSync(path.join(ROOT,'data',f),'utf8').replace(/^\uFEFF/,''));
+const closet=read('closet.json'),calendar=read('calendar.json');
+const sessions=new Map(),locks=new Map(),globalCalls=[];let totalCalls=0;
+const now=()=>new Date().toISOString(),copy=x=>JSON.parse(JSON.stringify(x)),won=n=>Number(n).toLocaleString('ko-KR')+'원';
+const fail=(message,status=400,code='INVALID_REQUEST',extra={})=>Object.assign(new Error(message),{status,code,extra});
+function initial(){return {version:2,wallet:{balance:130000,reserve:70000},rules:{approvalAmount:100000,categoryMode:{아우터:'auto',상의:'auto',하의:'auto',신발:'auto',잡화:'auto',생활:'auto',선물:'auto',구독:'auto'}},quotes:{},receipts:[],requestResults:{},paymentKeys:{},feedback:[{id:'seed',at:'2026-09-21',item:'리넨 셔츠',note:'드라이클리닝 맡기기 번거로워서 잘 안 입게 돼'}],checks:['관리 방법(물세탁 가능 여부) 먼저 확인'],checkRules:[{kind:'care',category:null,label:'관리 방법(물세탁 가능 여부) 먼저 확인'}],ruleHistory:[],log:[],apiCalls:[]};}
+function persist(session){session.state.updatedAt=now();const file=path.join(RUNTIME,session.id+'.json'),tmp=file+'.'+crypto.randomBytes(4).toString('hex')+'.tmp';fs.writeFileSync(tmp,JSON.stringify(session.state),{encoding:'utf8',mode:0o600});fs.renameSync(tmp,file);}
+function sessionFor(req,res){const match=(req.headers.cookie||'').match(/(?:^|;\s*)moa_sid=([a-f0-9]{64})(?:;|$)/);let id=match?.[1],state;if(id&&sessions.has(id))return sessions.get(id);if(id)try{state=JSON.parse(fs.readFileSync(path.join(RUNTIME,id+'.json'),'utf8'));if(state.version!==2)state=null;}catch{}if(!state){id=crypto.randomBytes(32).toString('hex');state=initial();}const session={id,state};sessions.set(id,session);persist(session);const secure=req.socket?.encrypted||req.headers['x-forwarded-proto']==='https';res.setHeader('Set-Cookie',`moa_sid=${id}; Path=/; HttpOnly; SameSite=Lax; Max-Age=86400${secure?'; Secure':''}`);return session;}
+function log(s,type,text){s.log.unshift({at:now(),type,text});s.log=s.log.slice(0,120);}
+function catalog(){const c=read('products.json');for(const p of c)if(!Number.isSafeInteger(p.price)||p.price<0)throw fail('카탈로그 금액 오류',503,'CATALOG_ERROR');return c;}
+function product(id){const p=catalog().find(p=>p.id===id);if(!p)throw fail('등록되지 않은 상품입니다');return {...p,source:'시연용 샘플 상품 정보'};}
+function stateView(s){return {wallet:s.wallet,rules:s.rules,feedback:s.feedback,checks:s.checks,receipts:s.receipts,ruleHistory:s.ruleHistory,log:s.log,llm:{skt:!!process.env.OBA_API_KEY,openai:false,naver:false},closet,calendar,quotes:Object.values(s.quotes).slice(-40).reverse(),catalog:catalog(),paymentMode:'simulation',persistence:process.env.VERCEL?'ephemeral-instance-session':'session-json'};}
+function change(s,rule,before,after,reason){const c={at:now(),rule,before,after,reason};s.ruleHistory.unshift(c);s.ruleHistory=s.ruleHistory.slice(0,100);return c;}
+function money(v,name){if(typeof v!=='number'||!Number.isSafeInteger(v)||v<0||v>100000000)throw fail(name+'은 0 이상의 정수여야 합니다');return v;}
+function requestKey(v){if(v===undefined)return crypto.randomUUID();if(typeof v!=='string'||!v.trim()||v.length>120)throw fail('요청 식별자가 잘못되었습니다');return v;}
+async function idem(s,scope,id,payload,work){const key=scope+':'+requestKey(id),fp=JSON.stringify(payload),old=s.requestResults[key];if(old){if(old.fp!==fp)throw fail('같은 요청 ID를 다른 요청에 재사용할 수 없습니다',409,'IDEMPOTENCY_CONFLICT');return copy(old.result);}const result=await work();s.requestResults[key]={fp,result:copy(result)};const ks=Object.keys(s.requestResults);while(ks.length>100)delete s.requestResults[ks.shift()];return result;}
+function policy(s,products,reuse=[]){const lines=[],skipped=[];for(const p of products){const own=!p.restock&&closet.find(c=>c.category===p.category&&c.type===p.type&&c.color===p.color);if(p.duplicateSubscription)skipped.push({...p,reason:'이미 이용 중인 구독입니다'});else if(own){skipped.push({...p,reason:`이미 ${own.color} ${own.name}이(가) 옷장에 있어요`});reuse.push(`${own.color} ${own.name}`);}else lines.push(p);}const shipping=lines.length?3000:0,total=lines.reduce((sum,p)=>sum+p.price,0)+shipping,after=s.wallet.balance-total,extra=after-s.wallet.reserve,hard=[],why=[];if(total>s.wallet.balance)hard.push('가상 잔액이 부족해요');if(after<s.wallet.reserve)hard.push(`남겨둘 생활비 ${won(s.wallet.reserve)}를 침범해요`);for(const p of lines){if(p.inStock===false)hard.push(p.name+': 품절');if(p.risky)hard.push(p.name+': 사기·비가역 거래 위험으로 차단');if(p.refundable===false)why.push(p.name+': 환불 불가');if(p.newSeller)why.push(p.name+': 처음 거래하는 판매처');if(p.subscription)why.push(p.name+': 반복 청구 구독');if(s.rules.categoryMode[p.category]==='approve')why.push(p.category+': 사용자 결재 지정');}if(total>=s.rules.approvalAmount&&lines.length)why.push(`총액 ${won(total)}이 결재 기준 ${won(s.rules.approvalAmount)} 이상`);if(lines.some(p=>!p.restock))why.push('처음 고르는 상품은 사람이 최종 확인해요');for(const c of s.checkRules)for(const p of lines){if(c.category&&c.category!==p.category)continue;if(c.kind==='care'&&['상의','하의','아우터'].includes(p.category)&&p.care!=='machine_wash')why.push(p.name+': 이전 피드백에 따라 물세탁 가능 여부 확인 필요');if(c.kind==='waist'&&p.category==='하의')why.push(p.name+': 허리 치수·착용 정보 '+(p.waist||'미확인')+' 확인 필요');}return {lines,reuse:[...new Set(reuse)],skipped,shipping,total,after,reserve:s.wallet.reserve,extra,remaining:s.wallet.balance-s.wallet.reserve,keepsReserve:extra>=0,why:[...new Set([...hard,...why])],decision:!lines.length?'skip':hard.length?'blocked':why.length?'approve':'auto'};}
+function quote(s,{ids,title,reuse=[],evidence=[],kind='custom'}){if(!Array.isArray(ids)||ids.length>20||ids.some(x=>typeof x!=='string'))throw fail('상품 ID 목록이 잘못되었습니다');const unique=[...new Set(ids)],judged=policy(s,unique.map(product),reuse.slice());const q={id:crypto.randomUUID(),outfit:title||'선택한 구매',productIds:unique,kind,...judged,evidence:copy(evidence),status:'pending',createdAt:now(),priceSnapshot:Object.fromEntries(unique.map(id=>[id,product(id).price]))};s.quotes[q.id]=q;log(s,'judge',`${q.outfit}: ${q.decision} · ${won(q.total)} · ${q.why.join(' / ')}`);return q;}
+function alternative(a,b){a.alternative={id:b.id,name:b.outfit,outfit:b.outfit,total:b.total,decision:b.decision,why:b.why};}
+function checkout(s,q,idemKey,by,outcome){if(!q)throw fail('견적을 찾을 수 없어요',404,'QUOTE_NOT_FOUND');if(['rejected','superseded'].includes(q.status))throw fail('종료된 견적은 결제할 수 없어요. 새 견적을 요청하세요',409,'TERMINAL_QUOTE');if(q.status==='unknown')throw fail('결과 불명 상태입니다. 재결제하지 말고 상태 확인을 실행하세요',409,'PAYMENT_UNKNOWN',{quote:q});if(q.status==='paid')return s.receipts.find(r=>r.quoteId===q.id);const pk=requestKey(idemKey),old=s.paymentKeys[pk];if(old&&old!==q.id)throw fail('다른 결제에 사용한 승인 식별자입니다',409,'IDEMPOTENCY_CONFLICT');const fresh=q.productIds.map(product);if(fresh.some(p=>p.price!==q.priceSnapshot[p.id])){q.status='stale';throw fail('가격이 바뀌었어요. 새 견적을 확인하고 다시 승인하세요',409,'REQUOTE_REQUIRED',{quoteId:q.id});}if(q.status==='stale')throw fail('새 견적이 필요합니다',409,'REQUOTE_REQUIRED');const check=policy(s,fresh,q.reuse.slice());Object.assign(q,check);if(check.decision==='blocked')throw fail('안전 기준을 통과하지 못해 결제하지 않았어요',409,'POLICY_BLOCKED',{quote:q});if(check.decision==='skip')throw fail('구매할 상품이 없습니다',409,'NO_PURCHASE');if(by==='자동 처리'&&check.decision!=='auto')throw fail('사람의 결재가 필요합니다',409,'APPROVAL_REQUIRED',{quote:q});if(outcome==='failed'){q.status='failed';log(s,'pay-failed','모의 결제 실패. 잔액 변동 없음');throw fail('모의 결제 실패. 잔액은 차감하지 않았어요',409,'PAYMENT_FAILED',{quote:q});}if(outcome==='unknown'){q.status='unknown';log(s,'pay-unknown','모의 결제 결과 불명. 추가 결제 차단');throw fail('모의 결과 불명. 중복 결제 방지를 위해 상태 확인이 필요해요',409,'PAYMENT_UNKNOWN',{quote:q});}const before=s.wallet.balance;s.wallet.balance=check.after;q.status='paid';s.paymentKeys[pk]=q.id;const rc={id:'R-'+crypto.randomBytes(5).toString('hex').toUpperCase(),quoteId:q.id,outfit:q.outfit,lines:copy(q.lines),shipping:q.shipping,total:q.total,balanceBefore:before,balanceAfter:s.wallet.balance,reserve:s.wallet.reserve,by,at:now(),simulated:true,status:'paid',execution:{mode:'simulation',priceAndStockRechecked:true,walletVerified:s.wallet.balance===before-q.total}};s.receipts.unshift(rc);log(s,'pay',`${by}: ${won(q.total)} 모의 결제 완료 · 잔액 ${won(s.wallet.balance)}`);return rc;}
+async function interpret(s,text){const route=/상품권|급히.*송금|대신.*송금/.test(text)?'risk':/구독/.test(text)?'subscription':/양말|휴지|리필|떨어/.test(text)?'restock':/면접|바지|재킷/.test(text)?'interview':/결혼|하객/.test(text)?'wedding':/생신|선물|생일/.test(text)?'gift':'other';const evidence=[{source:'대화',text}];if(route==='wedding')for(const e of calendar.filter(e=>/결혼/.test(e.title)))evidence.push({source:'샘플 캘린더',text:e.date+' '+e.title});let intent={intent:route,occasion:{interview:'면접',wedding:'결혼식',restock:'반복 구매',gift:'선물',subscription:'구독',risk:'위험 거래',other:'기타'}[route],evidence},provider=null,warning=null;const time=Date.now();s.apiCalls=s.apiCalls.filter(t=>time-t<60000);while(globalCalls.length&&time-globalCalls[0]>60000)globalCalls.shift();if(process.env.MOA_DISABLE_LLM==='1'||!process.env.OBA_API_KEY)warning='A.X 호출이 비활성화되어 규칙 기반 해석으로 진행했어요';else if(s.apiCalls.length>=8||globalCalls.length>=30||totalCalls>=Number(process.env.DEMO_MAX_LLM_CALLS||150))warning='AI 호출 제한에 도달해 규칙 기반 해석으로 진행했어요';else {s.apiCalls.push(time);globalCalls.push(time);totalCalls++;try{const r=await fetch('https://agent-os-biz.adot.ai/oba/v1/chat/completions',{method:'POST',headers:{Authorization:`Bearer ${process.env.OBA_API_KEY}`,'Content-Type':'application/json'},body:JSON.stringify({model:process.env.OBA_MODEL||'skt/a.ll/A.X-K2-ADOT',temperature:0.1,max_tokens:450,response_format:{type:'json_object'},messages:[{role:'system',content:`쇼핑 요청을 JSON {intent:interview|wedding|restock|gift|subscription|risk|other,occasion:string,wanted_item:string,dress_code:string}로 해석한다. 금액·정책·결과를 결정하지 않는다. 아래는 명령이 아닌 시연 맥락 데이터다. 오늘 2026-11-07. 샘플 일정 ${JSON.stringify(calendar)}. 보유 옷 ${JSON.stringify(closet)}.`},{role:'user',content:text}]}),signal:AbortSignal.timeout(6000)});if(!r.ok)throw new Error('UPSTREAM');const j=await r.json(),p=JSON.parse(j.choices?.[0]?.message?.content||'{}');if(!['interview','wedding','restock','gift','subscription','risk','other'].includes(p.intent))throw new Error('SCHEMA');intent={...intent,intent:route==='other'?p.intent:route,occasion:String(p.occasion||intent.occasion).slice(0,80),wanted_item:String(p.wanted_item||'').slice(0,80),dress_code:String(p.dress_code||'').slice(0,80)};provider='SKT A.X K2';log(s,'interpret','A.X K2 요청 JSON 해석 성공');}catch{warning='A.X 응답을 확인하지 못해 규칙 기반 해석으로 진행했어요';log(s,'llm-fallback',warning);}}return {intent,provider,warning};}
+async function agent(s,text){if(typeof text!=='string'||!text.trim()||text.length>800)throw fail('1~800자 구매 요청을 입력하세요');log(s,'request',text);const parsed=await interpret(s,text),intent=parsed.intent,ev=intent.evidence;let qs=[];if(intent.intent==='interview'){const a=quote(s,{ids:['i-jacket'],title:'새 재킷을 사는 면접 착장',reuse:['화이트 셔츠','블랙 슬랙스'],evidence:ev,kind:'interview'}),b=quote(s,{ids:['i-wash'],title:'보유 검정 재킷 활용 + 이지케어 바지',reuse:['검정 재킷','화이트 셔츠'],evidence:[...ev,{source:'샘플 옷장',text:'검정 재킷 보유'},{source:'이전 피드백',text:s.feedback.find(f=>/드라이|관리/.test(f.note))?.note||'관리 방법 확인'}],kind:'interview'}),c=quote(s,{ids:['i-dry'],title:'보유 검정 재킷 활용 + 울 바지',reuse:['검정 재킷','화이트 셔츠'],evidence:[...ev,{source:'샘플 상품 정보',text:'드라이클리닝 필요'}],kind:'interview'});alternative(a,b);alternative(c,b);alternative(b,c);qs=/바지|허리|물세탁/.test(text)?[b,c,a]:[a,b,c];}else if(intent.intent==='wedding'){const a=quote(s,{ids:['p1','p2','p3','p4'],title:'하객룩 A · 네이비 셋업',evidence:ev,kind:'wedding'}),b=quote(s,{ids:['p5','p6'],title:'하객룩 B · 보유 로퍼 활용',reuse:['브라운 페니 로퍼'],evidence:ev,kind:'wedding'});alternative(a,b);alternative(b,a);qs=[a,b];}else if(intent.intent==='restock')qs=[quote(s,{ids:[/휴지/.test(text)?'d-tissue':'p7'],title:/휴지/.test(text)?'늘 사던 휴지 리필':'늘 사던 양말 5켤레',evidence:ev,kind:'restock'})];else if(intent.intent==='gift')qs=[quote(s,{ids:['d-gift'],title:'생신 선물 후보',evidence:ev,kind:'gift'})];else if(intent.intent==='subscription')qs=[quote(s,{ids:['d-subscription'],title:'이미 이용 중인 구독 점검',evidence:ev,kind:'subscription'})];else if(intent.intent==='risk')qs=[quote(s,{ids:['d-risk'],title:'상품권·대리 송금 위험 거래',evidence:ev,kind:'risk'})];else return {...parsed,reply:'면접·결혼식 옷, 양말·휴지 리필, 선물·구독 요청을 도와줄 수 있어. 무엇이 필요한지 조금 더 알려줘.',quotes:[]};let receipt;if(qs[0].decision==='auto')receipt=checkout(s,qs[0],'auto-'+qs[0].id,'자동 처리');const q=qs[0];let reply=receipt?`기준 안이라 ${won(receipt.total)}을 모의 자동 처리했어. 실제 돈은 사용하지 않았고 잔액은 ${won(receipt.balanceAfter)}이야.`:q.decision==='blocked'?`이 구매는 ${q.why[0]} 그래서 결제하지 않았어.${q.alternative?' 대안을 비교해봐.':''}`:q.decision==='skip'?'이미 있는 것이라 새로 살 필요가 없어. 결제하지 않았어.':'이유와 대안을 결재함에 올렸어. 아직 결제하지 않았으니 조건을 보고 결정해줘.';if(parsed.warning)reply+='\n'+parsed.warning;return {...parsed,reply,quotes:qs,...(receipt?{receipt}:{})};}
+function selectQuote(s,b){let q=s.quotes[b.quoteId];if(b.action==='alternative'){if(!q)throw fail('원래 견적을 찾을 수 없어요',404);if(!q.alternative)throw fail('연결된 대안이 없어요');const old=q;q=s.quotes[q.alternative.id];if(!q)throw fail('대안 견적이 만료됐어요',404);if(old.status==='pending')old.status='superseded';}else if(Array.isArray(b.productIds))q=quote(s,{ids:b.productIds,title:'직접 선택한 상품',evidence:[{source:'사용자 선택',text:'서버 카탈로그에서 선택한 상품'}]});else if(q?.status==='stale')q=quote(s,{ids:q.productIds,title:q.outfit,reuse:q.reuse,evidence:q.evidence,kind:q.kind});if(!q)throw fail('견적을 찾을 수 없어요',404);if(['rejected','superseded'].includes(q.status))throw fail('종료된 견적입니다. 새 견적을 요청하세요',409);let receipt;if(q.status==='paid')receipt=s.receipts.find(r=>r.quoteId===q.id);else if(q.decision==='auto')receipt=checkout(s,q,'select-'+q.id,'자동 처리');log(s,'select',q.outfit+' 선택');return {quote:q,...(receipt?{receipt}:{})};}
+function feedback(s,b){const rc=s.receipts.find(r=>r.id===b.receiptId);if(!rc)throw fail('구매 영수증을 찾을 수 없어요',404);const line=rc.lines.find(l=>l.name===b.lineName||l.id===b.lineName);if(!line)throw fail('구매한 상품을 선택하세요');const note=String(b.note||'').trim();if(!note||note.length>1000)throw fail('피드백은 1~1000자여야 합니다');const hash=crypto.createHash('sha256').update(rc.id+line.id+note).digest('hex');let fb=s.feedback.find(f=>f.id===hash);if(!fb){fb={id:hash,receiptId:rc.id,item:line.name,note,at:now(),applied:false};s.feedback.unshift(fb);}const proposed=[];if(/허리|앉|치수|불편/.test(note)&&line.category==='하의')proposed.push({kind:'waist',category:'하의',label:'바지 구매 → 허리 치수·착용 정보 확인 필요'});if(/드라이|세탁|관리.*번거/.test(note))proposed.push({kind:'care',category:null,label:'관리 방법(물세탁 가능 여부) 먼저 확인'});const negative=/불편|별로|후회|번거|안.*입|안.*써|작아|커서/.test(note);let delta=null;if(b.apply===true&&!fb.applied){for(const c of proposed)if(!s.checkRules.some(x=>x.kind===c.kind&&x.category===c.category)){s.checkRules.push(c);s.checks.push(c.label);delta=change(s,'구매 전 확인 항목','없음',c.label,note);}if(negative&&s.rules.categoryMode[line.category]!=='approve'){s.rules.categoryMode[line.category]='approve';delta=change(s,line.category+' 카테고리','자동 처리','결재',note);}fb.applied=true;log(s,'feedback',line.name+': 다음 구매 확인·결재 기준에 반영');}else log(s,'feedback',line.name+': 피드백 기록');return {checks:s.checks,change:delta,proposed:proposed.map(c=>c.label),feedback:fb,rules:s.rules};}
+function updateRules(s,b){if(Object.hasOwn(b,'approvalAmount'))money(b.approvalAmount,'결재 기준');if(Object.hasOwn(b,'reserve')){money(b.reserve,'생활비');if(b.reserve>s.wallet.balance)throw fail('생활비는 현재 잔액보다 클 수 없어요');}if(b.categoryMode!==undefined){if(!b.categoryMode||typeof b.categoryMode!=='object'||Array.isArray(b.categoryMode))throw fail('카테고리 설정 오류');for(const[k,v]of Object.entries(b.categoryMode))if(!Object.hasOwn(s.rules.categoryMode,k)||!['auto','approve'].includes(v))throw fail('카테고리 설정 오류');}if(Object.hasOwn(b,'approvalAmount')){change(s,'결재 금액',s.rules.approvalAmount,b.approvalAmount,'사용자 직접 설정');s.rules.approvalAmount=b.approvalAmount;}if(Object.hasOwn(b,'reserve')){change(s,'생활비',s.wallet.reserve,b.reserve,'사용자 직접 설정');s.wallet.reserve=b.reserve;}if(b.categoryMode)for(const[k,v]of Object.entries(b.categoryMode)){change(s,k,s.rules.categoryMode[k],v,'사용자 직접 설정');s.rules.categoryMode[k]=v;}log(s,'rule','사용자가 결재 기준을 변경했어요');return {...s.rules,wallet:s.wallet,rules:s.rules};}
+const send=(res,status,value)=>{res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});res.end(JSON.stringify(value));};
+async function body(req){if(req.body&&typeof req.body==='object'&&!Array.isArray(req.body)){if(Buffer.byteLength(JSON.stringify(req.body))>32768)throw fail('요청이 너무 큽니다',413);return req.body;}let data=typeof req.body==='string'?req.body:'';if(Buffer.byteLength(data)>32768)throw fail('요청이 너무 큽니다',413);if(!data)for await(const chunk of req){data+=chunk;if(Buffer.byteLength(data)>32768)throw fail('요청이 너무 큽니다',413);}let b;try{b=JSON.parse(data||'{}');}catch{throw fail('올바른 JSON이 아닙니다');}if(!b||typeof b!=='object'||Array.isArray(b))throw fail('객체 형식 요청이 필요합니다');return b;}
+async function serial(session,work){const before=locks.get(session.id)||Promise.resolve();let done;const next=new Promise(resolve=>done=resolve);locks.set(session.id,next);await before;try{return await work();}finally{try{persist(session);}finally{done();if(locks.get(session.id)===next)locks.delete(session.id);}}}
+export default async function handler(req,res){try{const u=new URL(req.url,'http://localhost');if(u.pathname==='/api/health')return send(res,200,{ok:true,version:'0.2.0',paymentMode:'simulation',sktConfigured:!!process.env.OBA_API_KEY,persistence:process.env.VERCEL?'ephemeral-instance-session':'session-json',realPayment:false});if(u.pathname.startsWith('/api/')){const session=sessionFor(req,res);if(req.method==='GET'&&u.pathname==='/api/state')return send(res,200,stateView(session.state));if(req.method==='GET'&&u.pathname.startsWith('/api/jobs/')){const q=session.state.quotes[u.pathname.split('/').pop()];if(!q)throw fail('견적 없음',404);return send(res,200,{quote:q,receipt:session.state.receipts.find(r=>r.quoteId===q.id)||null});}if(req.method!=='POST')throw fail('지원하지 않는 요청',405);if(!String(req.headers['content-type']||'').startsWith('application/json'))throw fail('JSON 요청만 허용합니다',415);if(req.headers.origin){const o=new URL(req.headers.origin).host,allowed=[req.headers.host,String(req.headers['x-forwarded-host']||'').split(',')[0].trim()];if(!allowed.includes(o))throw fail('다른 출처의 요청은 허용하지 않습니다',403);}const b=await body(req),result=await serial(session,async()=>{const s=session.state;if(['/api/agent','/api/chat','/api/moa/start'].includes(u.pathname)){const r=await idem(s,'agent',b.requestId,{text:b.text},()=>agent(s,b.text));return u.pathname==='/api/chat'?{...r,cards:r.quotes.map(q=>({kind:q.status==='paid'?'receipt':'approval',quote:q,receipt:r.receipt}))}:r;}if(['/api/quote','/api/moa/quote'].includes(u.pathname))return idem(s,'quote',b.requestId,{quoteId:b.quoteId,productIds:b.productIds,action:b.action},()=>selectQuote(s,b));if(u.pathname==='/api/approve'){const q=s.quotes[b.quoteId];if(!q)throw fail('견적을 찾을 수 없어요',404,'QUOTE_NOT_FOUND');if(b.action==='reject'){if(['paid','unknown'].includes(q.status))throw fail('결제 완료 또는 결과 불명 견적은 반려할 수 없어요',409);q.status='rejected';log(s,'reject',q.outfit+' 반려. 결제 없음');return {rejected:true,quote:q};}if(b.action==='resolve'){if(q.status!=='unknown')return {quote:q,receipt:s.receipts.find(r=>r.quoteId===q.id)||null};q.status='failed';log(s,'resolve','모의 실행 기록 조회 결과 미결제로 확인. 새 승인으로 재시도 가능');return {quote:q,resolved:true,paid:false};}if(b.action!==undefined&&b.action!=='approve')throw fail('승인 또는 반려를 선택하세요');return {receipt:checkout(s,q,b.idemKey,'사용자 결재 승인',b.demoOutcome),quote:q};}if(u.pathname==='/api/feedback')return feedback(s,b);if(u.pathname==='/api/regret')return feedback(s,{receiptId:b.receiptId,lineName:b.line,note:b.answer==='bad'?'별로였어. 다음 구매는 먼저 확인할래':'잘 샀어',apply:true});if(u.pathname==='/api/moa/feedback')return feedback(s,{...b,lineName:b.lineName||b.item});if(u.pathname==='/api/rules')return updateRules(s,b);if(u.pathname==='/api/reset'){session.state=initial();log(session.state,'reset','이 브라우저의 시연 상태만 초기화');return {ok:true,...stateView(session.state)};}throw fail('API를 찾을 수 없습니다',404);});return send(res,200,result);}if(req.method!=='GET'&&req.method!=='HEAD')throw fail('지원하지 않는 요청',405);const root=path.join(ROOT,'public'),rel=u.pathname==='/'?'index.html':decodeURIComponent(u.pathname).replace(/^\//,''),file=path.resolve(root,rel);if(!file.startsWith(root+path.sep)||!fs.existsSync(file)||!fs.statSync(file).isFile())throw fail('파일을 찾을 수 없습니다',404);const types={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.png':'image/png','.svg':'image/svg+xml'};res.writeHead(200,{'Content-Type':types[path.extname(file)]||'application/octet-stream','X-Content-Type-Options':'nosniff','Cache-Control':'no-store'});if(req.method==='HEAD')res.end();else fs.createReadStream(file).pipe(res);}catch(e){if(!res.headersSent)send(res,e.status||500,{error:e.status?e.message:'요청 처리 중 오류가 발생했어요',code:e.code||'SERVER_ERROR',...(e.extra||{})});else res.end();}}
+export const createAppServer=()=>http.createServer(handler);
+if(!process.env.VERCEL&&!process.env.MOA_NO_LISTEN&&process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url)){const server=createAppServer();server.listen(Number(process.env.PORT||4400),()=>console.log(`모아의 결재함 http://localhost:${server.address().port} · 모의 결제 · 세션별 저장 · A.X ${process.env.OBA_API_KEY?'설정됨':'미설정'}`));}
+function loadEnv(file){if(!fs.existsSync(file))return;for(const line of fs.readFileSync(file,'utf8').split(/\r?\n/)){const m=line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/);if(m&&process.env[m[1]]===undefined)process.env[m[1]]=m[2].replace(/^['"]|['"]$/g,'');}}
